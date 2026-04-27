@@ -121,13 +121,62 @@ function fmtTime(t) { return t ? new Date(t).toLocaleTimeString("es-HN", { hour:
 function fmtDate(d) { return new Date(d).toLocaleDateString("es-HN", { weekday: "short", day: "2-digit", month: "short" }); }
 
 function parseClockCSV(csvText) {
-  const lines = csvText.trim().split("\n"); if (lines.length < 2) return []; const records = [];
-  for (let i = 1; i < lines.length; i++) { const cols = lines[i].split(","); if (cols.length < 10) continue; const time = cols[0].trim(), userId = cols[1].trim(), evento = cols[9].trim(); if (!userId || evento === "Acceso denegado" || evento === "Dispositivo inicializado") continue; const parts = time.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/); if (!parts) continue; const [, mm, dd, yyyy, hh, mi, ss] = parts; records.push({ userId, dateStr: `${yyyy}-${mm}-${dd}`, dt: new Date(+yyyy, +mm - 1, +dd, +hh, +mi, +ss) }); }
+  // Normalize: replace semicolons with commas, handle CRLF
+  const text = csvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = text.trim().split("\n");
+  if (lines.length < 2) return [];
+  
+  // Detect separator (semicolon or comma) from header
+  const sep = lines[0].includes(";") ? ";" : ",";
+  
+  const records = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(sep);
+    if (cols.length < 10) continue;
+    const time = cols[0].trim(), userId = cols[1].trim(), evento = cols[9].trim();
+    if (!userId || evento === "Acceso denegado" || evento === "Dispositivo inicializado") continue;
+    
+    // Try multiple date formats:
+    // Format 1: MM/DD/YYYY HH:MM:SS (original)
+    // Format 2: D/M/YYYY HH:MM (no leading zeros, no seconds)
+    // Format 3: DD/MM/YYYY HH:MM:SS
+    let dt = null, dateStr = null;
+    
+    // Try: DD/M/YYYY HH:MM or D/M/YYYY HH:MM (no seconds)
+    let m = time.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (m) {
+      const [, p1, p2, yyyy, hh, mi, ss] = m;
+      const sec = ss || "00";
+      // Determine if DD/MM or MM/DD
+      // If p1 > 12, it must be DD/MM
+      // If p2 > 12, it must be MM/DD  
+      // If both <= 12, check context (Honduras uses DD/MM)
+      let dd, mm;
+      if (parseInt(p1) > 12) { dd = p1; mm = p2; }
+      else if (parseInt(p2) > 12) { mm = p1; dd = p2; }
+      else { dd = p1; mm = p2; } // Default: DD/MM for Honduras
+      
+      dd = dd.padStart(2, "0");
+      mm = mm.padStart(2, "0");
+      dt = new Date(+yyyy, +mm - 1, +dd, +hh, +mi, +sec);
+      dateStr = `${yyyy}-${mm}-${dd}`;
+    }
+    
+    if (!dt || !dateStr) continue;
+    records.push({ userId, dateStr, dt });
+  }
   return groupPunches(records);
 }
 function parseClockXLS(data) {
   try { const wb = XLSX.read(data, { type: "array" }); const ws = wb.Sheets[wb.SheetNames[0]]; const json = XLSX.utils.sheet_to_json(ws, { header: 1 }); if (json.length < 2) return []; const records = [];
-  for (let i = 1; i < json.length; i++) { const row = json[i]; if (!row || row.length < 10) continue; const time = String(row[0] || "").trim(), userId = String(row[1] || "").trim(), evento = String(row[9] || "").trim(); if (!userId || evento === "Acceso denegado" || evento === "Dispositivo inicializado") continue; const parts = time.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/); if (!parts) continue; const [, mm, dd, yyyy, hh, mi, ss] = parts; records.push({ userId, dateStr: `${yyyy}-${mm}-${dd}`, dt: new Date(+yyyy, +mm - 1, +dd, +hh, +mi, +ss) }); }
+  for (let i = 1; i < json.length; i++) { const row = json[i]; if (!row || row.length < 10) continue; const time = String(row[0] || "").trim(), userId = String(row[1] || "").trim(), evento = String(row[9] || "").trim(); if (!userId || evento === "Acceso denegado" || evento === "Dispositivo inicializado") continue;
+    let m = time.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (!m) continue;
+    const [, p1, p2, yyyy, hh, mi, ss] = m;
+    let dd, mm;
+    if (parseInt(p1) > 12) { dd = p1; mm = p2; } else if (parseInt(p2) > 12) { mm = p1; dd = p2; } else { dd = p1; mm = p2; }
+    dd = String(dd).padStart(2, "0"); mm = String(mm).padStart(2, "0");
+    records.push({ userId, dateStr: `${yyyy}-${mm}-${dd}`, dt: new Date(+yyyy, +mm - 1, +dd, +hh, +mi, +(ss||0)) }); }
   return groupPunches(records); } catch (e) { return []; }
 }
 function groupPunches(records) {
@@ -357,7 +406,7 @@ function ClockTab({ employees, clockEntries, refresh }) {
 
   const handleFile=(e)=>{const file=e.target.files[0];if(!file)return;setImporting(true);const isXLS=file.name.match(/\.xls[xm]?$/i);
     if(isXLS){const reader=new FileReader();reader.onload=async(evt)=>{let parsed=parseClockXLS(new Uint8Array(evt.target.result));if(parsed.length===0){const tr=new FileReader();tr.onload=async(e2)=>{let t=e2.target.result;if(t.includes("<table")||t.includes("<html")){const doc=new DOMParser().parseFromString(t,"text/html");const lines=[];doc.querySelectorAll("tr").forEach(r=>{lines.push(Array.from(r.querySelectorAll("td,th")).map(c=>c.textContent.trim()).join(","))});t=lines.join("\n")}await finishImport(parseClockCSV(t))};tr.readAsText(file,"UTF-8");return}await finishImport(parsed)};reader.readAsArrayBuffer(file)}
-    else{const reader=new FileReader();reader.onload=async(evt)=>await finishImport(parseClockCSV(evt.target.result));reader.readAsText(file,"UTF-8")}e.target.value=""};
+    else{const reader=new FileReader();reader.onload=async(evt)=>{let parsed=parseClockCSV(evt.target.result);if(parsed.length===0){const r2=new FileReader();r2.onload=async(e2)=>await finishImport(parseClockCSV(e2.target.result));r2.readAsText(file,"ISO-8859-1");return}await finishImport(parsed)};reader.readAsText(file,"UTF-8")}e.target.value=""};
   const finishImport=async(parsed)=>{if(parsed.length===0){setImportResult({error:"No se encontraron registros válidos."});setImporting(false);return}const existingIds=new Set(clockEntries.map(c=>c.id));const newE=parsed.filter(p=>!existingIds.has(p.id));if(newE.length>0)await db.insertClockEntries(newE);await refresh();setImportResult({added:newE.length,total:parsed.length,skipped:parsed.length-newE.length});setImporting(false)};
   const addManual=async()=>{if(!mf.empId)return;const entry={id:`${mf.empId}_${mf.date}_m${Date.now()}`,employeeId:mf.empId,date:mf.date,checkIn:`${mf.date}T${mf.cin}:00`,lunchOut:`${mf.date}T${mf.lout}:00`,lunchIn:`${mf.date}T${mf.lin}:00`,checkOut:`${mf.date}T${mf.cout}:00`,punches:4};await db.insertClockEntries([entry]);await refresh()};
   const removeEntry=async(id)=>{await db.deleteClockEntry(id);await refresh()};
