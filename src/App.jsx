@@ -29,6 +29,12 @@ const db = {
     const { error } = await supabase.from("clock_entries").upsert(rows, { onConflict: "id" });
     if (error) console.error("insertClockEntries:", error);
   },
+  async updateClockEntry(entry) {
+    const { error } = await supabase.from("clock_entries").update({
+      check_in: entry.checkIn, lunch_out: entry.lunchOut, lunch_in: entry.lunchIn, check_out: entry.checkOut
+    }).eq("id", entry.id);
+    if (error) console.error("updateClockEntry:", error);
+  },
   async deleteClockEntry(id) { await supabase.from("clock_entries").delete().eq("id", id); },
   async deleteAllClockEntries() { await supabase.from("clock_entries").delete().neq("id", ""); },
   async getPayrolls() {
@@ -254,6 +260,10 @@ function ClockTab({ employees, clockEntries, refresh }) {
   const [mode,setMode]=useState("import");const [importResult,setImportResult]=useState(null);const [importing,setImporting]=useState(false);
   const [mf,setMf]=useState({empId:"",date:new Date().toISOString().slice(0,10),cin:"08:00",lout:"12:00",lin:"13:00",cout:"18:00"});
   const [filterEmp,setFilterEmp]=useState("");const [filterMonth,setFilterMonth]=useState(new Date().toISOString().slice(0,7));
+  const [editEntry,setEditEntry]=useState(null);
+  const [editForm,setEditForm]=useState({checkIn:"",lunchOut:"",lunchIn:"",checkOut:""});
+  const [editSaving,setEditSaving]=useState(false);
+
   const handleFile=(e)=>{const file=e.target.files[0];if(!file)return;setImporting(true);const isXLS=file.name.match(/\.xls[xm]?$/i);
     if(isXLS){const reader=new FileReader();reader.onload=async(evt)=>{let parsed=parseClockXLS(new Uint8Array(evt.target.result));if(parsed.length===0){const tr=new FileReader();tr.onload=async(e2)=>{let t=e2.target.result;if(t.includes("<table")||t.includes("<html")){const doc=new DOMParser().parseFromString(t,"text/html");const lines=[];doc.querySelectorAll("tr").forEach(r=>{lines.push(Array.from(r.querySelectorAll("td,th")).map(c=>c.textContent.trim()).join(","))});t=lines.join("\n")}await finishImport(parseClockCSV(t))};tr.readAsText(file,"UTF-8");return}await finishImport(parsed)};reader.readAsArrayBuffer(file)}
     else{const reader=new FileReader();reader.onload=async(evt)=>await finishImport(parseClockCSV(evt.target.result));reader.readAsText(file,"UTF-8")}e.target.value=""};
@@ -261,11 +271,93 @@ function ClockTab({ employees, clockEntries, refresh }) {
   const addManual=async()=>{if(!mf.empId)return;const entry={id:`${mf.empId}_${mf.date}_m${Date.now()}`,employeeId:mf.empId,date:mf.date,checkIn:`${mf.date}T${mf.cin}:00`,lunchOut:`${mf.date}T${mf.lout}:00`,lunchIn:`${mf.date}T${mf.lin}:00`,checkOut:`${mf.date}T${mf.cout}:00`,punches:4};await db.insertClockEntries([entry]);await refresh()};
   const removeEntry=async(id)=>{await db.deleteClockEntry(id);await refresh()};
   const clearAll=async()=>{if(confirm("¿Borrar TODAS las marcaciones?")) {await db.deleteAllClockEntries();await refresh()}};
+
+  // ─── Edit functions ───
+  const extractTime = (isoStr) => {
+    if (!isoStr) return "";
+    try { const d = new Date(isoStr); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
+    catch { return ""; }
+  };
+  const openEdit = (entry) => {
+    setEditEntry(entry);
+    setEditForm({
+      checkIn: extractTime(entry.checkIn),
+      lunchOut: extractTime(entry.lunchOut),
+      lunchIn: extractTime(entry.lunchIn),
+      checkOut: extractTime(entry.checkOut),
+    });
+  };
+  const saveEdit = async () => {
+    if (!editEntry) return;
+    setEditSaving(true);
+    const d = editEntry.date;
+    const updated = {
+      id: editEntry.id,
+      checkIn: editForm.checkIn ? `${d}T${editForm.checkIn}:00` : null,
+      lunchOut: editForm.lunchOut ? `${d}T${editForm.lunchOut}:00` : null,
+      lunchIn: editForm.lunchIn ? `${d}T${editForm.lunchIn}:00` : null,
+      checkOut: editForm.checkOut ? `${d}T${editForm.checkOut}:00` : null,
+    };
+    await db.updateClockEntry(updated);
+    await refresh();
+    setEditSaving(false);
+    setEditEntry(null);
+  };
+
+  // ─── Error detection ───
+  const hasError = (entry) => {
+    if (!entry.checkIn || !entry.checkOut) return "Falta entrada o salida";
+    const hrs = calcDayHours(entry);
+    if (hrs <= 0) return "0 horas registradas";
+    if (hrs > 16) return "Más de 16 horas";
+    if (!entry.lunchOut && !entry.lunchIn && hrs > 5) return "Sin marcación de almuerzo";
+    if (entry.lunchOut && !entry.lunchIn) return "Falta regreso de almuerzo";
+    if (!entry.lunchOut && entry.lunchIn) return "Falta salida de almuerzo";
+    return null;
+  };
+
   const filtered=clockEntries.filter(e=>(!filterEmp||e.employeeId===filterEmp)&&(!filterMonth||e.date.startsWith(filterMonth))).sort((a,b)=>b.date.localeCompare(a.date)||(a.employeeId||"").localeCompare(b.employeeId||""));
   const getN=id=>employees.find(e=>e.id===id)?.name||`ID ${id}`;
+  const errorCount = filtered.filter(e => hasError(e)).length;
+
   return (
     <div>
       <div style={S.pageHeader}><h2 style={S.title}>Reloj Marcador</h2><div style={S.goldLine}/></div>
+
+      {/* Edit Modal */}
+      {editEntry && (
+        <div style={S.overlay}><div style={S.modal}>
+          <h3 style={S.modalTitle}>Editar Marcación</h3>
+          <div style={{background:"#f0f3f8",borderRadius:10,padding:14,marginBottom:18}}>
+            <div style={{fontSize:14,fontWeight:700,color:"#0a2351"}}>{getN(editEntry.employeeId)}</div>
+            <div style={{fontSize:13,color:"#475569",marginTop:2}}>{fmtDate(editEntry.date+"T12:00:00")} — {editEntry.date}</div>
+            {hasError(editEntry) && <div style={{marginTop:8,padding:"6px 10px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:6,fontSize:12,color:"#dc2626",fontWeight:600}}>⚠️ {hasError(editEntry)}</div>}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              <label style={S.label}>Hora Entrada</label>
+              <input style={S.input} type="time" value={editForm.checkIn} onChange={e=>setEditForm({...editForm,checkIn:e.target.value})}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              <label style={S.label}>Sale Almuerzo</label>
+              <input style={S.input} type="time" value={editForm.lunchOut} onChange={e=>setEditForm({...editForm,lunchOut:e.target.value})}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              <label style={S.label}>Regresa Almuerzo</label>
+              <input style={S.input} type="time" value={editForm.lunchIn} onChange={e=>setEditForm({...editForm,lunchIn:e.target.value})}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              <label style={S.label}>Hora Salida</label>
+              <input style={S.input} type="time" value={editForm.checkOut} onChange={e=>setEditForm({...editForm,checkOut:e.target.value})}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24}}>
+            <button style={S.btnSec} onClick={()=>setEditEntry(null)}>Cancelar</button>
+            <button style={S.btnPrimary} onClick={saveEdit} disabled={editSaving}>{editSaving?"Guardando...":"Guardar Cambios"}</button>
+          </div>
+        </div></div>
+      )}
+
       <div style={S.card}>
         <div style={{display:"flex",gap:8,marginBottom:20}}>
           <button style={mode==="import"?S.btnPrimary:S.btnSec} onClick={()=>setMode("import")}>📥 Importar Archivo</button>
@@ -285,27 +377,45 @@ function ClockTab({ employees, clockEntries, refresh }) {
           <div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={addManual}>Registrar</button></div>
         </div>)}
       </div>
+
       <div style={S.card}>
-        <div style={S.titleRow}><h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📋</span> Registros ({filtered.length})</h3>{clockEntries.length>0&&<button style={{...S.btnDanger}} onClick={clearAll}>Borrar Todo</button>}</div>
+        <div style={S.titleRow}>
+          <h3 style={S.cardTitle}>
+            <span style={S.cardTitleIcon}>📋</span> Registros ({filtered.length})
+            {errorCount > 0 && <span style={{marginLeft:10,padding:"3px 10px",background:"#fef2f2",color:"#dc2626",borderRadius:20,fontSize:12,fontWeight:700,border:"1px solid #fecaca"}}>⚠️ {errorCount} con errores</span>}
+          </h3>
+          {clockEntries.length>0&&<button style={{...S.btnDanger}} onClick={clearAll}>Borrar Todo</button>}
+        </div>
         <div style={{display:"flex",gap:12,marginBottom:14,flexWrap:"wrap"}}>
           <select style={{...S.input,width:220}} value={filterEmp} onChange={e=>setFilterEmp(e.target.value)}><option value="">Todos los empleados</option>{employees.map(e=><option key={e.id} value={e.id}>{e.id} - {e.name}</option>)}</select>
           <input style={{...S.input,width:170}} type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
         </div>
         {filtered.length===0?<p style={{color:"#94a3b8",fontStyle:"italic"}}>No hay registros para este filtro.</p>:(
           <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Empleado","Fecha","Entrada","Sal.Almuerzo","Reg.Almuerzo","Salida","Hrs Efect.","Extra",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=6?"right":"left",...(i===8?{textAlign:"center"}:{})}}>{h}</th>)}
+            {["Empleado","Fecha","Entrada","Sal.Almuerzo","Reg.Almuerzo","Salida","Hrs Efect.","Extra","Estado",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=6&&i<=7?"right":"left",...(i>=8?{textAlign:"center"}:{})}}>{h}</th>)}
           </tr></thead><tbody>
             {filtered.map(e=>{const hrs=calcDayHours(e),dow=new Date(e.date+"T12:00:00").getDay(),extra=Math.max(0,hrs-getScheduledHours(dow)),isWE=dow===0||dow===6;
-            return(<tr key={e.id} style={isWE?{background:"#fffbeb"}:{}}>
+            const error = hasError(e);
+            const rowBg = error ? "#fef2f2" : isWE ? "#fffbeb" : {};
+            return(<tr key={e.id} style={{background:rowBg}}>
               <td style={{...S.td,fontWeight:600,color:"#0a2351",whiteSpace:"nowrap"}}>{getN(e.employeeId)}</td>
               <td style={S.td}>{fmtDate(e.date+"T12:00:00")}{isWE&&<span style={{marginLeft:4,fontSize:10,color:"#c9a227",fontWeight:700,background:"#fffbeb",padding:"1px 5px",borderRadius:4}}>{dow===0?"DOM":"SÁB"}</span>}</td>
-              <td style={{...S.td,color:"#0a6847",fontWeight:600}}>{fmtTime(e.checkIn)}</td>
+              <td style={{...S.td,color:e.checkIn?"#0a6847":"#dc2626",fontWeight:600}}>{e.checkIn?fmtTime(e.checkIn):<span style={{color:"#dc2626"}}>—</span>}</td>
               <td style={{...S.td,color:"#92400e"}}>{fmtTime(e.lunchOut)}</td>
               <td style={{...S.td,color:"#92400e"}}>{fmtTime(e.lunchIn)}</td>
-              <td style={{...S.td,color:"#b91c1c",fontWeight:600}}>{fmtTime(e.checkOut)}</td>
+              <td style={{...S.td,color:e.checkOut?"#b91c1c":"#dc2626",fontWeight:600}}>{e.checkOut?fmtTime(e.checkOut):<span style={{color:"#dc2626"}}>—</span>}</td>
               <td style={{...S.td,textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:12}}>{hrs.toFixed(1)}h</td>
               <td style={{...S.td,textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:extra>0?"#b91c1c":"#cbd5e1",fontWeight:extra>0?700:400}}>{extra>0?`+${extra.toFixed(1)}h`:"—"}</td>
-              <td style={{...S.td,textAlign:"center"}}><button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>removeEntry(e.id)}>✕</button></td>
+              <td style={{...S.td,textAlign:"center"}}>
+                {error
+                  ? <span style={{fontSize:11,color:"#dc2626",fontWeight:600,background:"#fef2f2",padding:"2px 8px",borderRadius:4,border:"1px solid #fecaca",whiteSpace:"nowrap"}}>⚠️ {error}</span>
+                  : <span style={{fontSize:11,color:"#0a6847",fontWeight:500}}>✓ OK</span>
+                }
+              </td>
+              <td style={{...S.td,textAlign:"center",whiteSpace:"nowrap"}}>
+                <button style={{...S.tblBtn,color:"#0a2351",borderColor:"#b0c4de"}} onClick={()=>openEdit(e)}>✏️ Editar</button>
+                <button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>removeEntry(e.id)}>✕</button>
+              </td>
             </tr>)})}
           </tbody></table></div>)}
       </div>
