@@ -426,9 +426,117 @@ function ClockTab({ employees, clockEntries, refresh }) {
 // ═══ PAYROLL ═══
 function PayrollTab({ employees, clockEntries, refresh }) {
   const [weekNum,setWeekNum]=useState("");const [from,setFrom]=useState("");const [to,setTo]=useState("");const [result,setResult]=useState(null);const [adj,setAdj]=useState({});const [saving,setSaving]=useState(false);
-  const generate=()=>{if(!from||!to)return alert("Selecciona las fechas.");const fs=from.slice(0,10),ts=to.slice(0,10);const pe=clockEntries.filter(c=>{const d=String(c.date).slice(0,10);return d>=fs&&d<=ts});const otData=calcOvertime(pe);
-    const rows=employees.map(emp=>{const d=otData[emp.id]||{totalEffective:0,regularDays:0,ot:{0.25:0,0.5:0,0.75:0,1.0:0}};const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*d.regularDays;const otPay=Object.entries(d.ot).reduce((sum,[rate,hrs])=>sum+hrs*hourly*(1+parseFloat(rate)),0);const a=adj[emp.id]||{};const fuel=+a.fuel||0,vacation=+a.vacation||0,incapacity=+a.incapacity||0,advance=+a.advance||0,dec4=+a.dec4||0,dec3=+a.dec3||0,otherDed=+a.otherDed||0;const totalEarned=baseSalary+otPay+fuel+vacation+incapacity+dec4+dec3;return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,daily,hourly,days:d.regularDays,effectiveHrs:d.totalEffective,baseSalary,ot:d.ot,otPay,fuel,vacation,incapacity,advance,dec4,dec3,otherDed,totalEarned,totalDeductions:advance+otherDed,netPay:totalEarned-advance-otherDed}});
-    setResult({period:`WK${weekNum||"?"} ${from} al ${to}`,rows,from,to,weekNum})};
+
+  const generate=()=>{
+    if(!from||!to)return alert("Selecciona las fechas.");
+    const fs=from.slice(0,10), ts=to.slice(0,10);
+
+    // Filter clock entries in date range
+    const pe=clockEntries.filter(c=>{const d=String(c.date).slice(0,10);return d>=fs&&d<=ts});
+
+    // Count working days in period (Mon-Fri only)
+    const workingDaysInPeriod = (() => {
+      let count = 0;
+      const start = new Date(fs + "T12:00:00");
+      const end = new Date(ts + "T12:00:00");
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dow = d.getDay();
+        if (dow >= 1 && dow <= 5) count++;
+      }
+      return count;
+    })();
+
+    // Group entries by employee
+    const byEmp = {};
+    pe.forEach(e => {
+      if (!byEmp[e.employeeId]) byEmp[e.employeeId] = [];
+      byEmp[e.employeeId].push(e);
+    });
+
+    const rows = employees.map(emp => {
+      const empEntries = byEmp[emp.id] || [];
+
+      // Count days with valid check-in AND check-out (Mon-Fri only)
+      const daysWorked = empEntries.filter(e => {
+        if (!e.checkIn || !e.checkOut) return false;
+        const dow = new Date(e.date + "T12:00:00").getDay();
+        return dow >= 1 && dow <= 5;
+      }).length;
+
+      // Weekend days worked (Sat/Sun)
+      const weekendEntries = empEntries.filter(e => {
+        if (!e.checkIn || !e.checkOut) return false;
+        const dow = new Date(e.date + "T12:00:00").getDay();
+        return dow === 0 || dow === 6;
+      });
+
+      // Pay logic: 5 days worked = 7 days paid, each absence = -2 days
+      const absences = workingDaysInPeriod - daysWorked;
+      const daysPaid = Math.max(0, 7 - (absences * 2));
+
+      const daily = emp.salary / 30;
+      const hourly = daily / 8;
+      const baseSalary = daily * daysPaid;
+
+      // ─── Overtime calculation ───
+      // Overtime is based on hours worked beyond scheduled per day
+      // Period: viernes 5pm → viernes 5pm (but we use the date range selected)
+      let ot = { 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0 };
+      let totalEffective = 0;
+
+      empEntries.forEach(entry => {
+        if (!entry.checkIn || !entry.checkOut) return;
+        const dow = new Date(entry.checkIn).getDay();
+        const hrs = calcDayHours(entry);
+        totalEffective += hrs;
+
+        // Weekend work — all hours at 100% overtime
+        if (dow === 0 || dow === 6) {
+          ot[1.0] += hrs;
+          return;
+        }
+
+        // Weekday overtime
+        const scheduled = getScheduledHours(dow);
+        if (hrs <= scheduled) return;
+
+        const extra = hrs - scheduled;
+        const cout = new Date(entry.checkOut);
+        const cH = cout.getHours() + cout.getMinutes() / 60;
+
+        // Friday after 5pm: check if this is the cutoff
+        // Classify overtime by checkout hour
+        if (cH <= 19) ot[0.25] += extra;
+        else if (cH <= 21) { ot[0.25] += Math.min(1, extra); if (extra > 1) ot[0.5] += extra - 1; }
+        else { ot[0.25] += Math.min(1, extra); const r = extra - 1; if (r > 0) { ot[0.5] += Math.min(2, r); if (r > 2) ot[0.75] += r - 2; } }
+      });
+
+      // OT pay based on employee's hourly rate
+      const otPay = Object.entries(ot).reduce((sum, [rate, hrs]) => sum + hrs * hourly * (1 + parseFloat(rate)), 0);
+
+      // Adjustments
+      const a = adj[emp.id] || {};
+      const fuel=+a.fuel||0, vacation=+a.vacation||0, incapacity=+a.incapacity||0;
+      const advance=+a.advance||0, dec4=+a.dec4||0, dec3=+a.dec3||0, otherDed=+a.otherDed||0;
+
+      const totalEarned = baseSalary + otPay + fuel + vacation + incapacity + dec4 + dec3;
+      const totalDeductions = advance + otherDed;
+
+      return {
+        employeeId: emp.id, name: emp.name, position: emp.position,
+        salary: emp.salary, daily, hourly,
+        daysWorked, absences, daysPaid,
+        days: daysPaid,
+        effectiveHrs: totalEffective, baseSalary,
+        ot, otPay,
+        fuel, vacation, incapacity, advance, dec4, dec3, otherDed,
+        totalEarned, totalDeductions, netPay: totalEarned - totalDeductions,
+      };
+    });
+
+    setResult({ period: `WK${weekNum||"?"} ${from} al ${to}`, rows, from, to, weekNum, workingDaysInPeriod });
+  };
+
   const doSave=async()=>{if(!result)return;setSaving(true);await db.savePayroll(result);await refresh();setSaving(false);alert("✅ Planilla guardada.")};
   const updAdj=(eId,f,v)=>setAdj(p=>({...p,[eId]:{...(p[eId]||{}),[f]:v}}));
   return (
@@ -436,6 +544,7 @@ function PayrollTab({ employees, clockEntries, refresh }) {
       <div style={S.pageHeader}><h2 style={S.title}>Generar Planilla</h2><div style={S.goldLine}/></div>
       <div style={S.card}>
         <h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📅</span> Período</h3>
+        <p style={{fontSize:12,color:"#64748b",marginBottom:12}}>Período de lectura: Viernes 5:00pm → Viernes siguiente 5:00pm. Selecciona las fechas de la semana laboral (Lunes a Viernes).</p>
         <div style={S.formGrid}>
           <Field label="Semana #" value={weekNum} onChange={setWeekNum} ph="3"/>
           <Field label="Desde" value={from} onChange={setFrom} type="date"/>
@@ -443,7 +552,17 @@ function PayrollTab({ employees, clockEntries, refresh }) {
           <div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar Planilla</button></div>
         </div>
       </div>
+
       {result&&(<>
+        {/* Pay rules summary */}
+        <div style={{...S.card,background:"linear-gradient(135deg,#f0f3f8,#e8eef6)",border:"1px solid #d0daea"}}>
+          <div style={{display:"flex",gap:24,flexWrap:"wrap",fontSize:13}}>
+            <div><span style={{color:"#64748b"}}>Días laborales en período:</span> <strong style={{color:"#0a2351"}}>{result.workingDaysInPeriod}</strong></div>
+            <div><span style={{color:"#64748b"}}>Regla de pago:</span> <strong style={{color:"#0a6847"}}>5 días trabajados = 7 días pagados</strong></div>
+            <div><span style={{color:"#64748b"}}>Penalización por falta:</span> <strong style={{color:"#b91c1c"}}>-2 días por cada ausencia</strong></div>
+          </div>
+        </div>
+
         <div style={S.card}>
           <div style={S.titleRow}><h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📋</span> {result.period}</h3>
             <div style={{display:"flex",gap:8}}>
@@ -452,15 +571,16 @@ function PayrollTab({ employees, clockEntries, refresh }) {
             </div>
           </div>
           <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Cód","Nombre","Posición","Sal.M.","Días","Hrs","Salario","OT 25%","OT 50%","OT 75%","OT 100%","Total OT","Devengado","Deducc.","Neto a Pagar"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
+            {["Cód","Nombre","Posición","Sal.M.","Trab.","Faltas","Pago","Salario","OT 25%","OT 50%","OT 75%","OT 100%","Total OT","Devengado","Deducc.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
           </tr></thead><tbody>
-            {result.rows.map(r=><tr key={r.employeeId}>
+            {result.rows.map(r=><tr key={r.employeeId} style={r.absences>0?{background:"#fffbeb"}:{}}>
               <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td>
               <td style={{...S.td,fontWeight:600,whiteSpace:"nowrap",fontSize:12,color:"#0a2351"}}>{r.name}</td>
               <td style={{...S.td,fontSize:11}}>{r.position}</td>
               <td style={S.tdM}>{formatL(r.salary)}</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{r.days}</td>
-              <td style={S.tdM}>{r.effectiveHrs.toFixed(1)}h</td>
+              <td style={{...S.tdM,fontWeight:700,color:"#0a6847"}}>{r.daysWorked}d</td>
+              <td style={{...S.tdM,fontWeight:700,color:r.absences>0?"#dc2626":"#0a6847"}}>{r.absences>0?`${r.absences}d`:"—"}</td>
+              <td style={{...S.tdM,fontWeight:700,color:r.daysPaid<7?"#c9a227":"#0a2351"}}>{r.daysPaid}d</td>
               <td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td>
               <td style={{...S.tdM,color:r.ot[0.25]>0?"#c9a227":"#d4d4d8"}}>{r.ot[0.25]>0?r.ot[0.25].toFixed(1)+"h":"—"}</td>
               <td style={{...S.tdM,color:r.ot[0.5]>0?"#ea580c":"#d4d4d8"}}>{r.ot[0.5]>0?r.ot[0.5].toFixed(1)+"h":"—"}</td>
@@ -472,7 +592,7 @@ function PayrollTab({ employees, clockEntries, refresh }) {
               <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:13}}>{formatL(r.netPay)}</td>
             </tr>)}
           </tbody><tfoot><tr style={{background:"#e8eef6"}}>
-            <td colSpan={6} style={{...S.td,fontWeight:700,color:"#0a2351",textTransform:"uppercase",fontSize:11,letterSpacing:"0.05em"}}>Totales</td>
+            <td colSpan={7} style={{...S.td,fontWeight:700,color:"#0a2351",textTransform:"uppercase",fontSize:11,letterSpacing:"0.05em"}}>Totales</td>
             <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td><td colSpan={4}></td>
             <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.otPay,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalEarned,0))}</td>
