@@ -632,8 +632,20 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
     });
 
     const weeklyEmps = employees.filter(e => (e.empType || "weekly") === "weekly");
+    const fridayAutoFills = []; // Track auto-filled fridays for warnings
+
     const rows = weeklyEmps.map(emp => {
-      const empEntries = byEmp[emp.id] || [];
+      let empEntries = (byEmp[emp.id] || []).map(e => {
+        // Auto-fill: Friday with checkIn but no checkOut → set checkOut to 5:00pm
+        if (e.checkIn && !e.checkOut) {
+          const dow = new Date(e.date + "T12:00:00").getDay();
+          if (dow === 5) { // Friday
+            fridayAutoFills.push({ name: emp.name, date: e.date });
+            return { ...e, checkOut: `${e.date}T17:00:00`, autoFilled: true };
+          }
+        }
+        return e;
+      });
 
       // Count days with valid check-in AND check-out (Mon-Fri only, excluding holidays)
       const daysWorked = empEntries.filter(e => {
@@ -715,7 +727,7 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
 
     const applyIHSS = isLastWeekOfMonth(fs, ts);
     const applyRAP = isSecondWeekOfMonth(fs);
-    setResult({ period: `WK${weekNum||"?"} ${from} al ${to}`, rows, from, to, weekNum, workingDaysInPeriod, holidaysInPeriod: holidayDates.size, holidayNames: Object.entries(holidayNames).map(([d,n])=>`${n} (${d})`), applyIHSS, applyRAP });
+    setResult({ period: `WK${weekNum||"?"} ${from} al ${to}`, rows, from, to, weekNum, workingDaysInPeriod, holidaysInPeriod: holidayDates.size, holidayNames: Object.entries(holidayNames).map(([d,n])=>`${n} (${d})`), applyIHSS, applyRAP, fridayAutoFills });
   };
 
   const doSave=async()=>{if(!result)return;setSaving(true);await db.savePayroll(result);await refresh();setSaving(false);alert("✅ Planilla guardada.")};
@@ -751,6 +763,19 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
             </div>
           )}
         </div>
+
+        {/* Friday auto-fill warnings */}
+        {result.fridayAutoFills?.length > 0 && (
+          <div style={{...S.card, background:"#fffbeb", border:"1px solid #fde68a"}}>
+            <h4 style={{fontSize:13,fontWeight:700,color:"#92400e",marginBottom:8}}>⚠️ Viernes con salida auto-completada a 5:00pm</h4>
+            <p style={{fontSize:12,color:"#a16207",marginBottom:8}}>Los siguientes empleados tenían marca de entrada el viernes pero no de salida. Se usó 5:00pm como hora de salida para el cálculo. Verifica que sea correcto.</p>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {result.fridayAutoFills.map((f,i) => (
+                <span key={i} style={{padding:"4px 12px",background:"#fff",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e",fontWeight:600}}>{f.name} — {fmtDate(f.date+"T12:00:00")}</span>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={S.card}>
           <div style={S.titleRow}><h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📋</span> {result.period}</h3>
