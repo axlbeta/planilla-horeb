@@ -129,13 +129,21 @@ function getWeekOfMonth(dateStr) {
   if (day <= 14) return 2;
   if (day <= 21) return 3;
   if (day <= 28) return 4;
-  return 5; // last week
+  return 5;
 }
+// IHSS: applies when the period contains the last day of the month
+// (28 Feb, 30 Apr/Jun/Sep/Nov, 31 Jan/Mar/May/Jul/Aug/Oct/Dec)
 function isLastWeekOfMonth(fromDate, toDate) {
+  const from = new Date(fromDate + "T12:00:00");
   const to = new Date(toDate + "T12:00:00");
-  const lastDay = new Date(to.getFullYear(), to.getMonth() + 1, 0).getDate();
-  return to.getDate() >= lastDay - 6; // within last 7 days of month
+  // Check each day in the period — if any day is the last day of its month, IHSS applies
+  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+    const lastDayOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    if (d.getDate() === lastDayOfMonth) return true;
+  }
+  return false;
 }
+// RAP: applies on the second week of the month (days 8-14)
 function isSecondWeekOfMonth(fromDate) {
   const wk = getWeekOfMonth(fromDate);
   return wk === 2;
