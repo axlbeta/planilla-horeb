@@ -242,7 +242,27 @@ function calcOvertime(entries) {
   const GRACE = 10/60; // 10 minutes grace period in hours
   const byEmp = {}; entries.forEach((e) => { if (!byEmp[e.employeeId]) byEmp[e.employeeId] = []; byEmp[e.employeeId].push(e); }); const results = {};
   Object.entries(byEmp).forEach(([empId, days]) => { let totalEffective = 0, regularDays = 0, ot = { 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0 };
-  days.forEach((day) => { if (!day.checkIn || !day.checkOut) return; const dow = new Date(day.checkIn).getDay(), hrs = calcDayHours(day), scheduled = getScheduledHours(dow); if (dow === 0 || dow === 6) { ot[1.0] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; } regularDays++; totalEffective += hrs; if (hrs <= scheduled + GRACE) return; const extra = hrs - scheduled - GRACE, cH = new Date(day.checkOut).getHours() + new Date(day.checkOut).getMinutes() / 60; if (cH <= 19) ot[0.25] += extra; else if (cH <= 21) { ot[0.25] += Math.min(1, extra); if (extra > 1) ot[0.5] += extra - 1; } else { ot[0.25] += Math.min(1, extra); const r = extra - 1; if (r > 0) { ot[0.5] += Math.min(2, r); if (r > 2) ot[0.75] += r - 2; } } });
+  days.forEach((day) => { if (!day.checkIn || !day.checkOut) return; const dow = new Date(day.checkIn).getDay(), hrs = calcDayHours(day), scheduled = getScheduledHours(dow);
+    // Sunday = 100%
+    if (dow === 0) { ot[1.0] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; }
+    // Saturday = 25%
+    if (dow === 6) { ot[0.25] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; }
+    regularDays++; totalEffective += hrs; if (hrs <= scheduled + GRACE) return;
+    const extra = hrs - scheduled - GRACE;
+    const cH = new Date(day.checkOut).getHours() + new Date(day.checkOut).getMinutes() / 60;
+    // 6pm-7pm (18-19) = 25%, 7:01pm-9pm (19-21) = 50%, 9pm-5am (21-5) = 75%
+    if (cH <= 19) { ot[0.25] += extra; }
+    else if (cH <= 21) {
+      const hrs25 = Math.max(0, Math.min(extra, 1)); // up to 1hr at 25% (6-7pm)
+      ot[0.25] += hrs25;
+      ot[0.5] += extra - hrs25;
+    } else {
+      const hrs25 = Math.max(0, Math.min(extra, 1)); // 6-7pm
+      const hrs50 = Math.max(0, Math.min(extra - hrs25, 2)); // 7-9pm
+      const hrs75 = Math.max(0, extra - hrs25 - hrs50); // 9pm+
+      ot[0.25] += hrs25; ot[0.5] += hrs50; ot[0.75] += hrs75;
+    }
+  });
   results[empId] = { totalEffective, regularDays, ot }; }); return results;
 }
 function printPayroll(payroll) {
@@ -740,9 +760,14 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         const hrs = calcDayHours(entry);
         totalEffective += hrs;
 
-        // Weekend or holiday work → 100% overtime
-        if (dow === 0 || dow === 6 || holidayDates.has(entry.date)) {
+        // Sunday or holiday → 100%
+        if (dow === 0 || holidayDates.has(entry.date)) {
           ot[1.0] += hrs;
+          return;
+        }
+        // Saturday → 25%
+        if (dow === 6) {
+          ot[0.25] += hrs;
           return;
         }
 
@@ -751,9 +776,18 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         if (hrs <= scheduled + GRACE) return;
         const extra = hrs - scheduled - GRACE;
         const cH = new Date(entry.checkOut).getHours() + new Date(entry.checkOut).getMinutes() / 60;
-        if (cH <= 19) ot[0.25] += extra;
-        else if (cH <= 21) { ot[0.25] += Math.min(1, extra); if (extra > 1) ot[0.5] += extra - 1; }
-        else { ot[0.25] += Math.min(1, extra); const r = extra - 1; if (r > 0) { ot[0.5] += Math.min(2, r); if (r > 2) ot[0.75] += r - 2; } }
+        // 6pm-7pm (18-19) = 25%, 7:01pm-9pm (19-21) = 50%, 9pm-5am (21-5) = 75%
+        if (cH <= 19) { ot[0.25] += extra; }
+        else if (cH <= 21) {
+          const hrs25 = Math.max(0, Math.min(extra, 1));
+          ot[0.25] += hrs25;
+          ot[0.5] += extra - hrs25;
+        } else {
+          const hrs25 = Math.max(0, Math.min(extra, 1));
+          const hrs50 = Math.max(0, Math.min(extra - hrs25, 2));
+          const hrs75 = Math.max(0, extra - hrs25 - hrs50);
+          ot[0.25] += hrs25; ot[0.5] += hrs50; ot[0.75] += hrs75;
+        }
       });
 
       const otPay = Object.entries(ot).reduce((sum, [rate, hrs]) => sum + hrs * hourly * (1 + parseFloat(rate)), 0);
