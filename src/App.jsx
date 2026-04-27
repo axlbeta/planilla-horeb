@@ -607,6 +607,8 @@ function ClockTab({ employees, clockEntries, refresh }) {
 function PayrollTab({ employees, clockEntries, refresh, holidays }) {
   const [weekNum,setWeekNum]=useState("");const [from,setFrom]=useState("");const [to,setTo]=useState("");const [result,setResult]=useState(null);const [adj,setAdj]=useState({});const [saving,setSaving]=useState(false);
 
+  const weeklyEmps = employees.filter(e => { const t = e.empType || "weekly"; return t === "weekly" || t === "weekly_nonclock"; });
+
   const generate=()=>{
     if(!from||!to)return alert("Selecciona las fechas.");
     const fs=from.slice(0,10), ts=to.slice(0,10);
@@ -639,10 +641,6 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
       byEmp[e.employeeId].push(e);
     });
 
-    const weeklyEmps = employees.filter(e => {
-      const t = e.empType || "weekly";
-      return t === "weekly" || t === "weekly_nonclock";
-    });
     const fridayAutoFills = []; // Track auto-filled fridays for warnings
 
     const rows = weeklyEmps.map(emp => {
