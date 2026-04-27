@@ -639,10 +639,47 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
       byEmp[e.employeeId].push(e);
     });
 
-    const weeklyEmps = employees.filter(e => (e.empType || "weekly") === "weekly");
+    const weeklyEmps = employees.filter(e => {
+      const t = e.empType || "weekly";
+      return t === "weekly" || t === "weekly_nonclock";
+    });
     const fridayAutoFills = []; // Track auto-filled fridays for warnings
 
     const rows = weeklyEmps.map(emp => {
+      const isNonClock = emp.empType === "weekly_nonclock";
+
+      // Non-clock employees: always get full 7 days unless manually adjusted
+      if (isNonClock) {
+        const daily = emp.salary / 30;
+        const hourly = daily / 8;
+        const a = adj[emp.id] || {};
+        const faltasManual = +a.faltas || 0; // Manual absence days
+        const daysPaid = Math.max(0, 7 - (faltasManual * 2));
+        const baseSalary = daily * daysPaid;
+        const fuel=+a.fuel||0, vacation=+a.vacation||0, incapacity=+a.incapacity||0;
+        const advance=+a.advance||0, dec4=+a.dec4||0, dec3=+a.dec3||0, otherDed=+a.otherDed||0;
+        const applyIHSS = isLastWeekOfMonth(fs, ts);
+        const ihss = applyIHSS ? calcIHSS_monthly(emp.salary) : { em: 0, ivm: 0, total: 0 };
+        const applyRAP = isSecondWeekOfMonth(fs);
+        const rapData = applyRAP ? calcRAP_monthly(emp.salary) : { feo3: 0, fio3: 0, employeeTotal: 0, rl: 0 };
+        const rap = rapData.employeeTotal;
+        const totalEarned = baseSalary + fuel + vacation + incapacity + dec4 + dec3;
+        const totalDeductions = ihss.total + rap + advance + otherDed;
+        return {
+          employeeId: emp.id, name: emp.name, position: emp.position,
+          salary: emp.salary, daily, hourly, isNonClock: true,
+          daysWorked: workingDaysInPeriod - faltasManual, absences: faltasManual, daysPaid,
+          holidaysInPeriod: holidayDates.size, days: daysPaid,
+          effectiveHrs: 0, baseSalary,
+          ot: { 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0 }, otPay: 0,
+          ihssEM: ihss.em, ihssIVM: ihss.ivm, ihssTotal: ihss.total,
+          rap, rapFeo3: rapData.feo3, rapFio3: rapData.fio3, rapRL: rapData.rl,
+          fuel, vacation, incapacity, advance, dec4, dec3, otherDed,
+          totalEarned, totalDeductions, netPay: totalEarned - totalDeductions,
+        };
+      }
+
+      // Regular clock employees
       let empEntries = (byEmp[emp.id] || []).map(e => {
         // Auto-fill: Friday with checkIn but no checkOut → set checkOut to 5:00pm
         if (e.checkIn && !e.checkOut) {
@@ -795,16 +832,16 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
           <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
             {["Cód","Nombre","Pos.","Sal.M.","Trab.","Faltas","Pago","Salario","Tot.OT","IHSS","RAP","Devengado","Deducc.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
           </tr></thead><tbody>
-            {result.rows.map(r=><tr key={r.employeeId} style={r.absences>0?{background:"#fffbeb"}:{}}>
+            {result.rows.map(r=><tr key={r.employeeId} style={r.absences>0?{background:"#fffbeb"}:r.isNonClock?{background:"#f0f3f8"}:{}}>
               <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td>
-              <td style={{...S.td,fontWeight:600,whiteSpace:"nowrap",fontSize:12,color:"#0a2351"}}>{r.name}</td>
+              <td style={{...S.td,fontWeight:600,whiteSpace:"nowrap",fontSize:12,color:"#0a2351"}}>{r.name} {r.isNonClock&&<span style={{fontSize:9,color:"#1d4ed8",background:"#eff6ff",padding:"1px 5px",borderRadius:3,marginLeft:4}}>SIN RELOJ</span>}</td>
               <td style={{...S.td,fontSize:11}}>{r.position}</td>
               <td style={S.tdM}>{formatL(r.salary)}</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#0a6847"}}>{r.daysWorked}d</td>
+              <td style={{...S.tdM,fontWeight:700,color:"#0a6847"}}>{r.isNonClock?"—":`${r.daysWorked}d`}</td>
               <td style={{...S.tdM,fontWeight:700,color:r.absences>0?"#dc2626":"#0a6847"}}>{r.absences>0?`${r.absences}d`:"—"}</td>
               <td style={{...S.tdM,fontWeight:700,color:r.daysPaid<7?"#c9a227":"#0a2351"}}>{r.daysPaid}d</td>
               <td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td>
-              <td style={{...S.tdM,fontWeight:700,color:r.otPay>0?"#b91c1c":"#d4d4d8"}}>{formatL(r.otPay)}</td>
+              <td style={{...S.tdM,fontWeight:700,color:r.otPay>0?"#b91c1c":"#d4d4d8"}}>{r.isNonClock?"N/A":formatL(r.otPay)}</td>
               <td style={{...S.tdM,color:"#7c3aed",fontSize:11}}>{r.ihssTotal>0?formatL(r.ihssTotal):"—"}</td>
               <td style={{...S.tdM,color:"#0369a1",fontSize:11}} title={r.rap>0?`FEO3: ${formatL(r.rapFeo3)} + FIO3: ${formatL(r.rapFio3)}\nRL patrono: ${formatL(r.rapRL)}`:""}>
                 {r.rap>0?formatL(r.rap):"—"}
@@ -828,9 +865,12 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
           <h3 style={S.cardTitle}><span style={S.cardTitleIcon}>⚙️</span> Ajustes por Empleado</h3>
           <p style={{fontSize:12,color:"#64748b",marginBottom:10}}>Ingresa los montos y genera de nuevo la planilla para que se recalcule.</p>
           <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Empleado","Combustible","Vacaciones","Incapacidad","Adelanto","Dec. 4to","Dec. 3ro","Otras Ded."].map((h,i)=><th key={i} style={S.th}>{h}</th>)}
+            {["Empleado","Tipo","Faltas","Combustible","Vacaciones","Incapacidad","Adelanto","Dec. 4to","Dec. 3ro","Otras Ded."].map((h,i)=><th key={i} style={S.th}>{h}</th>)}
           </tr></thead><tbody>
-            {employees.map(emp=>{const a=adj[emp.id]||{};return(<tr key={emp.id}><td style={{...S.td,fontWeight:600,fontSize:12,whiteSpace:"nowrap",color:"#0a2351"}}>{emp.name}</td>
+            {weeklyEmps.map(emp=>{const a=adj[emp.id]||{};const isNC=emp.empType==="weekly_nonclock";return(<tr key={emp.id} style={isNC?{background:"#f0f3f8"}:{}}>
+              <td style={{...S.td,fontWeight:600,fontSize:12,whiteSpace:"nowrap",color:"#0a2351"}}>{emp.name}</td>
+              <td style={{...S.td,fontSize:11}}>{isNC?<span style={{padding:"2px 8px",background:"#eff6ff",color:"#1d4ed8",borderRadius:4,fontSize:10,fontWeight:600}}>Sin Reloj</span>:<span style={{fontSize:10,color:"#64748b"}}>Reloj</span>}</td>
+              <td style={S.td}>{isNC?<input style={{...S.input,width:60,padding:"5px 8px",fontSize:12,textAlign:"right"}} type="number" value={a.faltas||""} onChange={e=>updAdj(emp.id,"faltas",e.target.value)} placeholder="0"/>:<span style={{color:"#94a3b8",fontSize:11}}>auto</span>}</td>
             {["fuel","vacation","incapacity","advance","dec4","dec3","otherDed"].map(f=><td key={f} style={S.td}><input style={{...S.input,width:85,padding:"5px 8px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0.00"/></td>)}</tr>)})}
           </tbody></table></div>
         </div>
