@@ -7,7 +7,7 @@ const db = {
   async getEmployees() {
     const { data, error } = await supabase.from("employees").select("*").eq("active", true).order("id");
     if (error) { console.error("getEmployees:", error); return []; }
-    return data.map(e => ({ id: e.id, name: e.name, position: e.position, salary: parseFloat(e.salary) }));
+    return data.map(e => ({ id: String(e.id), name: e.name, position: e.position, salary: parseFloat(e.salary) }));
   },
   async upsertEmployee(emp) {
     const { error } = await supabase.from("employees").upsert({ id: emp.id, name: emp.name, position: emp.position, salary: emp.salary, active: true, updated_at: new Date().toISOString() });
@@ -22,7 +22,7 @@ const db = {
     const { data, error } = await supabase.from("clock_entries").select("*").order("date", { ascending: false });
     if (error) { console.error("getClockEntries:", error); return []; }
     return data.map(e => ({
-      id: e.id, employeeId: e.employee_id, date: e.date,
+      id: e.id, employeeId: String(e.employee_id), date: String(e.date).slice(0, 10),
       checkIn: e.check_in, lunchOut: e.lunch_out, lunchIn: e.lunch_in, checkOut: e.check_out,
       punches: e.punches, name: ""
     }));
@@ -538,7 +538,14 @@ function PayrollTab({ employees, clockEntries, refresh }) {
 
   const generate = () => {
     if (!from || !to) return alert("Selecciona las fechas.");
-    const pe = clockEntries.filter((c) => c.date >= from && c.date <= to);
+    const fromStr = from.slice(0, 10);
+    const toStr = to.slice(0, 10);
+    const pe = clockEntries.filter((c) => {
+      const d = String(c.date).slice(0, 10);
+      return d >= fromStr && d <= toStr;
+    });
+    console.log("Clock entries in period:", pe.length, "from", fromStr, "to", toStr);
+    console.log("All clock dates:", clockEntries.map(c => c.date).slice(0, 10));
     const otData = calcOvertime(pe);
     const rows = employees.map((emp) => {
       const d = otData[emp.id] || { totalEffective: 0, regularDays: 0, ot: { 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0 } };
