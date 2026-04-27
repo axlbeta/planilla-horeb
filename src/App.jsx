@@ -65,7 +65,7 @@ const db = {
   },
   async savePayroll(payroll) {
     // Check if period exists
-    const { data: existing } = await supabase.from("payrolls").select("id").eq("period", payroll.period).single();
+    const { data: existing } = await supabase.from("payrolls").select("id").eq("period", payroll.period).maybeSingle();
     let payrollId;
     if (existing) {
       payrollId = existing.id;
