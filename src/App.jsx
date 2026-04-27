@@ -99,14 +99,14 @@ const IHSS = {
   IVM_TECHO: 11903.13,   // Techo Invalidez, Vejez y Muerte
   IVM_TASA: 0.025,        // 2.5% trabajador
 };
-const RAP_CONSOLIDADO = 178.55; // Monto consolidado en IVM (se resta del 1.5%)
-// RAP employee deduction: FEO3 = FIO3 = max(0, salary * 1.5% - 178.55)
-// Total employee = FEO3 + FIO3
-// RL (patrono) = salary * 4% (NOT deducted from employee)
+const RAP_TASA = 0.015; // 1.5% por fondo (FEO3 y FIO3)
+// RAP employee: FEO3 = FIO3 = 1.5% × (salario - techo IHSS)
+// RL (patrono) = 4% del salario (no se descuenta al empleado)
 function calcRAP_monthly(salary) {
-  const feo3 = Math.max(0, salary * 0.015 - RAP_CONSOLIDADO);
-  const fio3 = feo3; // FIO3 = FEO3
-  const rl = salary * 0.04; // Patrono only
+  const excedente = Math.max(0, salary - IHSS.IVM_TECHO);
+  const feo3 = excedente * RAP_TASA;
+  const fio3 = feo3;
+  const rl = salary * 0.04;
   return { feo3, fio3, employeeTotal: feo3 + fio3, rl, grandTotal: rl + feo3 + fio3 };
 }
 function calcIHSS_monthly(salary) {
