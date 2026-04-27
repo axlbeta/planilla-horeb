@@ -221,9 +221,10 @@ function groupPunches(records) {
 }
 function calcDayHours(entry) { if (!entry.checkIn || !entry.checkOut) return 0; let ms = new Date(entry.checkOut) - new Date(entry.checkIn); if (entry.lunchOut && entry.lunchIn) ms -= (new Date(entry.lunchIn) - new Date(entry.lunchOut)); else if (entry.lunchOut) ms -= 3600000; else if (ms > 5 * 3600000) ms -= 3600000; return Math.max(0, ms / 3600000); }
 function calcOvertime(entries) {
+  const GRACE = 10/60; // 10 minutes grace period in hours
   const byEmp = {}; entries.forEach((e) => { if (!byEmp[e.employeeId]) byEmp[e.employeeId] = []; byEmp[e.employeeId].push(e); }); const results = {};
   Object.entries(byEmp).forEach(([empId, days]) => { let totalEffective = 0, regularDays = 0, ot = { 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0 };
-  days.forEach((day) => { if (!day.checkIn || !day.checkOut) return; const dow = new Date(day.checkIn).getDay(), hrs = calcDayHours(day), scheduled = getScheduledHours(dow); if (dow === 0 || dow === 6) { ot[1.0] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; } regularDays++; totalEffective += hrs; if (hrs <= scheduled) return; const extra = hrs - scheduled, cH = new Date(day.checkOut).getHours() + new Date(day.checkOut).getMinutes() / 60; if (cH <= 19) ot[0.25] += extra; else if (cH <= 21) { ot[0.25] += Math.min(1, extra); if (extra > 1) ot[0.5] += extra - 1; } else { ot[0.25] += Math.min(1, extra); const r = extra - 1; if (r > 0) { ot[0.5] += Math.min(2, r); if (r > 2) ot[0.75] += r - 2; } } });
+  days.forEach((day) => { if (!day.checkIn || !day.checkOut) return; const dow = new Date(day.checkIn).getDay(), hrs = calcDayHours(day), scheduled = getScheduledHours(dow); if (dow === 0 || dow === 6) { ot[1.0] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; } regularDays++; totalEffective += hrs; if (hrs <= scheduled + GRACE) return; const extra = hrs - scheduled - GRACE, cH = new Date(day.checkOut).getHours() + new Date(day.checkOut).getMinutes() / 60; if (cH <= 19) ot[0.25] += extra; else if (cH <= 21) { ot[0.25] += Math.min(1, extra); if (extra > 1) ot[0.5] += extra - 1; } else { ot[0.25] += Math.min(1, extra); const r = extra - 1; if (r > 0) { ot[0.5] += Math.min(2, r); if (r > 2) ot[0.75] += r - 2; } } });
   results[empId] = { totalEffective, regularDays, ot }; }); return results;
 }
 function printPayroll(payroll) {
@@ -728,8 +729,9 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         }
 
         const scheduled = getScheduledHours(dow);
-        if (hrs <= scheduled) return;
-        const extra = hrs - scheduled;
+        const GRACE = 10/60; // 10 min grace period
+        if (hrs <= scheduled + GRACE) return;
+        const extra = hrs - scheduled - GRACE;
         const cH = new Date(entry.checkOut).getHours() + new Date(entry.checkOut).getMinutes() / 60;
         if (cH <= 19) ot[0.25] += extra;
         else if (cH <= 21) { ot[0.25] += Math.min(1, extra); if (extra > 1) ot[0.5] += extra - 1; }
