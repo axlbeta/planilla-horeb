@@ -219,7 +219,25 @@ function groupPunches(records) {
   if (dd.length >= 4) { e.checkIn = dd[0].toISOString(); e.lunchOut = dd[1].toISOString(); e.lunchIn = dd[2].toISOString(); e.checkOut = dd[dd.length - 1].toISOString(); } else if (dd.length === 3) { e.checkIn = dd[0].toISOString(); e.lunchOut = dd[1].toISOString(); e.checkOut = dd[2].toISOString(); } else if (dd.length === 2) { e.checkIn = dd[0].toISOString(); e.checkOut = dd[1].toISOString(); } else if (dd.length === 1) { e.checkIn = dd[0].toISOString(); }
   entries.push(e); }); return entries.sort((a, b) => a.date.localeCompare(b.date));
 }
-function calcDayHours(entry) { if (!entry.checkIn || !entry.checkOut) return 0; let ms = new Date(entry.checkOut) - new Date(entry.checkIn); if (entry.lunchOut && entry.lunchIn) ms -= (new Date(entry.lunchIn) - new Date(entry.lunchOut)); else if (entry.lunchOut) ms -= 3600000; else if (ms > 5 * 3600000) ms -= 3600000; return Math.max(0, ms / 3600000); }
+function calcDayHours(entry) {
+  if (!entry.checkIn || !entry.checkOut) return 0;
+  let cin = new Date(entry.checkIn);
+  const cout = new Date(entry.checkOut);
+  
+  // Grace period at entry: only if arriving between 7:50am and 8:00am, count as 8:00am
+  // If arriving earlier (7:00am, 7:30am etc), those hours DO count (could be overtime)
+  const scheduled8am = new Date(cin);
+  scheduled8am.setHours(8, 0, 0, 0);
+  const grace10before = new Date(cin);
+  grace10before.setHours(7, 50, 0, 0);
+  if (cin >= grace10before && cin < scheduled8am) cin = scheduled8am;
+  
+  let ms = cout - cin;
+  if (entry.lunchOut && entry.lunchIn) ms -= (new Date(entry.lunchIn) - new Date(entry.lunchOut));
+  else if (entry.lunchOut) ms -= 3600000;
+  else if (ms > 5 * 3600000) ms -= 3600000;
+  return Math.max(0, ms / 3600000);
+}
 function calcOvertime(entries) {
   const GRACE = 10/60; // 10 minutes grace period in hours
   const byEmp = {}; entries.forEach((e) => { if (!byEmp[e.employeeId]) byEmp[e.employeeId] = []; byEmp[e.employeeId].push(e); }); const results = {};
