@@ -33,10 +33,34 @@ const db = {
     const { error } = await supabase.from("clock_entries").update({
       check_in: entry.checkIn, lunch_out: entry.lunchOut, lunch_in: entry.lunchIn, check_out: entry.checkOut
     }).eq("id", entry.id);
-    if (error) console.error("updateClockEntry:", error);
+    if (error) {
+      console.error("updateClockEntry:", error);
+      // Fallback: delete and re-insert
+      await supabase.from("clock_entries").delete().eq("id", entry.id);
+      const { error: e2 } = await supabase.from("clock_entries").insert({
+        id: entry.id, employee_id: entry.employeeId, date: entry.date,
+        check_in: entry.checkIn, lunch_out: entry.lunchOut, lunch_in: entry.lunchIn, check_out: entry.checkOut,
+        punches: 4
+      });
+      if (e2) console.error("updateClockEntry fallback:", e2);
+    }
   },
   async deleteClockEntry(id) { await supabase.from("clock_entries").delete().eq("id", id); },
   async deleteAllClockEntries() { await supabase.from("clock_entries").delete().neq("id", ""); },
+
+  // Holidays
+  async getHolidays() {
+    const { data, error } = await supabase.from("holidays").select("*").order("date");
+    if (error) { console.error("getHolidays:", error); return []; }
+    return data.map(h => ({ id: h.id, date: String(h.date).slice(0, 10), name: h.name }));
+  },
+  async addHoliday(holiday) {
+    const { error } = await supabase.from("holidays").insert({ date: holiday.date, name: holiday.name });
+    if (error) console.error("addHoliday:", error);
+  },
+  async deleteHoliday(id) {
+    await supabase.from("holidays").delete().eq("id", id);
+  },
   async getPayrolls() {
     const { data, error } = await supabase.from("payrolls").select("*").order("id", { ascending: false });
     if (error) { console.error("getPayrolls:", error); return []; }
@@ -116,8 +140,9 @@ export default function App() {
   const [employees, setEmployees] = useState([]);
   const [clockEntries, setClockEntries] = useState([]);
   const [payrolls, setPayrolls] = useState([]);
+  const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
-  const refresh = useCallback(async () => { const [e, c, p] = await Promise.all([db.getEmployees(), db.getClockEntries(), db.getPayrolls()]); setEmployees(e); setClockEntries(c); setPayrolls(p); }, []);
+  const refresh = useCallback(async () => { const [e, c, p, h] = await Promise.all([db.getEmployees(), db.getClockEntries(), db.getPayrolls(), db.getHolidays()]); setEmployees(e); setClockEntries(c); setPayrolls(p); setHolidays(h); }, []);
   useEffect(() => { refresh().then(() => setLoading(false)); }, [refresh]);
 
   if (loading) return (
@@ -169,7 +194,7 @@ export default function App() {
       </header>
 
       <main style={S.main}><div style={{ animation: "fadeIn 0.35s ease" }}>
-        <TabComp employees={employees} refresh={refresh} clockEntries={clockEntries} payrolls={payrolls} />
+        <TabComp employees={employees} refresh={refresh} clockEntries={clockEntries} payrolls={payrolls} holidays={holidays} />
       </div></main>
 
       <footer style={S.footer}>
@@ -181,11 +206,20 @@ export default function App() {
 }
 
 // ═══ DASHBOARD ═══
-function DashboardTab({ employees, payrolls }) {
+function DashboardTab({ employees, payrolls, holidays, refresh }) {
   const totalSalary = employees.reduce((s, e) => s + e.salary, 0);
   const last = payrolls.length > 0 ? payrolls[0] : null;
   const [lastRows, setLastRows] = useState(null);
+  const [newHoliday, setNewHoliday] = useState({ date: "", name: "" });
   useEffect(() => { if (last) db.getPayrollRows(last.id).then(setLastRows); }, [last]);
+
+  const addHoliday = async () => {
+    if (!newHoliday.date || !newHoliday.name) return;
+    await db.addHoliday(newHoliday);
+    await refresh();
+    setNewHoliday({ date: "", name: "" });
+  };
+  const removeHoliday = async (id) => { await db.deleteHoliday(id); await refresh(); };
   return (
     <div>
       <div style={S.pageHeader}><h2 style={S.title}>Panel de Control</h2><div style={S.goldLine}/></div>
@@ -216,6 +250,37 @@ function DashboardTab({ employees, payrolls }) {
           </div>
         </div>
       )}
+
+      {/* Holidays Management */}
+      <div style={S.card}>
+        <h3 style={S.cardTitle}><span style={S.cardTitleIcon}>🎌</span> Días Feriados</h3>
+        <p style={{fontSize:12,color:"#64748b",marginBottom:12}}>Los feriados se pagan sin necesidad de marcación. No cuentan como falta.</p>
+        <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <label style={S.label}>Fecha</label>
+            <input style={{...S.input,width:160}} type="date" value={newHoliday.date} onChange={e=>setNewHoliday({...newHoliday,date:e.target.value})}/>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <label style={S.label}>Nombre del Feriado</label>
+            <input style={{...S.input,width:220}} value={newHoliday.name} onChange={e=>setNewHoliday({...newHoliday,name:e.target.value})} placeholder="Ej: Día de la Bandera"/>
+          </div>
+          <button style={S.btnPrimary} onClick={addHoliday}>+ Agregar</button>
+        </div>
+        {holidays.length===0?<p style={{color:"#94a3b8",fontStyle:"italic",fontSize:13}}>No hay feriados registrados.</p>:(
+          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+            {holidays.map(h=>(
+              <div key={h.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 14px",background:"linear-gradient(135deg,#fffbeb,#fef3c7)",border:"1px solid #fde68a",borderRadius:8}}>
+                <span style={{fontSize:18}}>🎌</span>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:"#92400e"}}>{h.name}</div>
+                  <div style={{fontSize:11,color:"#a16207"}}>{fmtDate(h.date+"T12:00:00")}</div>
+                </div>
+                <button style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:"#dc2626",marginLeft:4}} onClick={()=>removeHoliday(h.id)}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -291,12 +356,15 @@ function ClockTab({ employees, clockEntries, refresh }) {
     if (!editEntry) return;
     setEditSaving(true);
     const d = editEntry.date;
+    const toISO = (time) => time ? new Date(`${d}T${time}:00`).toISOString() : null;
     const updated = {
       id: editEntry.id,
-      checkIn: editForm.checkIn ? `${d}T${editForm.checkIn}:00` : null,
-      lunchOut: editForm.lunchOut ? `${d}T${editForm.lunchOut}:00` : null,
-      lunchIn: editForm.lunchIn ? `${d}T${editForm.lunchIn}:00` : null,
-      checkOut: editForm.checkOut ? `${d}T${editForm.checkOut}:00` : null,
+      employeeId: editEntry.employeeId,
+      date: d,
+      checkIn: toISO(editForm.checkIn),
+      lunchOut: toISO(editForm.lunchOut),
+      lunchIn: toISO(editForm.lunchIn),
+      checkOut: toISO(editForm.checkOut),
     };
     await db.updateClockEntry(updated);
     await refresh();
@@ -424,7 +492,7 @@ function ClockTab({ employees, clockEntries, refresh }) {
 }
 
 // ═══ PAYROLL ═══
-function PayrollTab({ employees, clockEntries, refresh }) {
+function PayrollTab({ employees, clockEntries, refresh, holidays }) {
   const [weekNum,setWeekNum]=useState("");const [from,setFrom]=useState("");const [to,setTo]=useState("");const [result,setResult]=useState(null);const [adj,setAdj]=useState({});const [saving,setSaving]=useState(false);
 
   const generate=()=>{
@@ -434,14 +502,20 @@ function PayrollTab({ employees, clockEntries, refresh }) {
     // Filter clock entries in date range
     const pe=clockEntries.filter(c=>{const d=String(c.date).slice(0,10);return d>=fs&&d<=ts});
 
-    // Count working days in period (Mon-Fri only)
+    // Get holidays in this period
+    const holidayDates = new Set(holidays.filter(h => h.date >= fs && h.date <= ts).map(h => h.date));
+    const holidayNames = {};
+    holidays.forEach(h => { if (h.date >= fs && h.date <= ts) holidayNames[h.date] = h.name; });
+
+    // Count working days in period (Mon-Fri, excluding holidays)
     const workingDaysInPeriod = (() => {
       let count = 0;
       const start = new Date(fs + "T12:00:00");
       const end = new Date(ts + "T12:00:00");
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const dow = d.getDay();
-        if (dow >= 1 && dow <= 5) count++;
+        const dateStr = d.toISOString().slice(0, 10);
+        if (dow >= 1 && dow <= 5 && !holidayDates.has(dateStr)) count++;
       }
       return count;
     })();
@@ -456,31 +530,28 @@ function PayrollTab({ employees, clockEntries, refresh }) {
     const rows = employees.map(emp => {
       const empEntries = byEmp[emp.id] || [];
 
-      // Count days with valid check-in AND check-out (Mon-Fri only)
+      // Count days with valid check-in AND check-out (Mon-Fri only, excluding holidays)
       const daysWorked = empEntries.filter(e => {
         if (!e.checkIn || !e.checkOut) return false;
         const dow = new Date(e.date + "T12:00:00").getDay();
-        return dow >= 1 && dow <= 5;
+        const isHoliday = holidayDates.has(e.date);
+        return dow >= 1 && dow <= 5 && !isHoliday;
       }).length;
 
-      // Weekend days worked (Sat/Sun)
-      const weekendEntries = empEntries.filter(e => {
-        if (!e.checkIn || !e.checkOut) return false;
-        const dow = new Date(e.date + "T12:00:00").getDay();
-        return dow === 0 || dow === 6;
-      });
+      // How many holidays fell in this period (these are paid automatically)
+      const holidaysInPeriod = holidayDates.size;
 
-      // Pay logic: 5 days worked = 7 days paid, each absence = -2 days
-      const absences = workingDaysInPeriod - daysWorked;
+      // Pay logic: working days required = workingDaysInPeriod (Mon-Fri minus holidays)
+      // If employee worked all required days → 7 days paid
+      // Each absence → -2 days from pay
+      const absences = Math.max(0, workingDaysInPeriod - daysWorked);
       const daysPaid = Math.max(0, 7 - (absences * 2));
 
       const daily = emp.salary / 30;
       const hourly = daily / 8;
       const baseSalary = daily * daysPaid;
 
-      // ─── Overtime calculation ───
-      // Overtime is based on hours worked beyond scheduled per day
-      // Period: viernes 5pm → viernes 5pm (but we use the date range selected)
+      // Overtime
       let ot = { 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0 };
       let totalEffective = 0;
 
@@ -490,31 +561,23 @@ function PayrollTab({ employees, clockEntries, refresh }) {
         const hrs = calcDayHours(entry);
         totalEffective += hrs;
 
-        // Weekend work — all hours at 100% overtime
-        if (dow === 0 || dow === 6) {
+        // Weekend or holiday work → 100% overtime
+        if (dow === 0 || dow === 6 || holidayDates.has(entry.date)) {
           ot[1.0] += hrs;
           return;
         }
 
-        // Weekday overtime
         const scheduled = getScheduledHours(dow);
         if (hrs <= scheduled) return;
-
         const extra = hrs - scheduled;
-        const cout = new Date(entry.checkOut);
-        const cH = cout.getHours() + cout.getMinutes() / 60;
-
-        // Friday after 5pm: check if this is the cutoff
-        // Classify overtime by checkout hour
+        const cH = new Date(entry.checkOut).getHours() + new Date(entry.checkOut).getMinutes() / 60;
         if (cH <= 19) ot[0.25] += extra;
         else if (cH <= 21) { ot[0.25] += Math.min(1, extra); if (extra > 1) ot[0.5] += extra - 1; }
         else { ot[0.25] += Math.min(1, extra); const r = extra - 1; if (r > 0) { ot[0.5] += Math.min(2, r); if (r > 2) ot[0.75] += r - 2; } }
       });
 
-      // OT pay based on employee's hourly rate
       const otPay = Object.entries(ot).reduce((sum, [rate, hrs]) => sum + hrs * hourly * (1 + parseFloat(rate)), 0);
 
-      // Adjustments
       const a = adj[emp.id] || {};
       const fuel=+a.fuel||0, vacation=+a.vacation||0, incapacity=+a.incapacity||0;
       const advance=+a.advance||0, dec4=+a.dec4||0, dec3=+a.dec3||0, otherDed=+a.otherDed||0;
@@ -525,7 +588,7 @@ function PayrollTab({ employees, clockEntries, refresh }) {
       return {
         employeeId: emp.id, name: emp.name, position: emp.position,
         salary: emp.salary, daily, hourly,
-        daysWorked, absences, daysPaid,
+        daysWorked, absences, daysPaid, holidaysInPeriod,
         days: daysPaid,
         effectiveHrs: totalEffective, baseSalary,
         ot, otPay,
@@ -534,7 +597,7 @@ function PayrollTab({ employees, clockEntries, refresh }) {
       };
     });
 
-    setResult({ period: `WK${weekNum||"?"} ${from} al ${to}`, rows, from, to, weekNum, workingDaysInPeriod });
+    setResult({ period: `WK${weekNum||"?"} ${from} al ${to}`, rows, from, to, weekNum, workingDaysInPeriod, holidaysInPeriod: holidayDates.size, holidayNames: Object.entries(holidayNames).map(([d,n])=>`${n} (${d})`) });
   };
 
   const doSave=async()=>{if(!result)return;setSaving(true);await db.savePayroll(result);await refresh();setSaving(false);alert("✅ Planilla guardada.")};
@@ -556,11 +619,17 @@ function PayrollTab({ employees, clockEntries, refresh }) {
       {result&&(<>
         {/* Pay rules summary */}
         <div style={{...S.card,background:"linear-gradient(135deg,#f0f3f8,#e8eef6)",border:"1px solid #d0daea"}}>
-          <div style={{display:"flex",gap:24,flexWrap:"wrap",fontSize:13}}>
-            <div><span style={{color:"#64748b"}}>Días laborales en período:</span> <strong style={{color:"#0a2351"}}>{result.workingDaysInPeriod}</strong></div>
-            <div><span style={{color:"#64748b"}}>Regla de pago:</span> <strong style={{color:"#0a6847"}}>5 días trabajados = 7 días pagados</strong></div>
-            <div><span style={{color:"#64748b"}}>Penalización por falta:</span> <strong style={{color:"#b91c1c"}}>-2 días por cada ausencia</strong></div>
+          <div style={{display:"flex",gap:24,flexWrap:"wrap",fontSize:13,marginBottom:result.holidayNames?.length>0?10:0}}>
+            <div><span style={{color:"#64748b"}}>Días laborales:</span> <strong style={{color:"#0a2351"}}>{result.workingDaysInPeriod}</strong></div>
+            {result.holidaysInPeriod>0&&<div><span style={{color:"#64748b"}}>Feriados:</span> <strong style={{color:"#c9a227"}}>{result.holidaysInPeriod} (pagados)</strong></div>}
+            <div><span style={{color:"#64748b"}}>Regla:</span> <strong style={{color:"#0a6847"}}>{result.workingDaysInPeriod}d trabajados = 7d pagados</strong></div>
+            <div><span style={{color:"#64748b"}}>Falta:</span> <strong style={{color:"#b91c1c"}}>-2 días/ausencia</strong></div>
           </div>
+          {result.holidayNames?.length>0&&(
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {result.holidayNames.map((h,i)=><span key={i} style={{padding:"3px 10px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e",fontWeight:600}}>🎌 {h}</span>)}
+            </div>
+          )}
         </div>
 
         <div style={S.card}>
