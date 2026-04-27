@@ -99,7 +99,16 @@ const IHSS = {
   IVM_TECHO: 11903.13,   // Techo Invalidez, Vejez y Muerte
   IVM_TASA: 0.025,        // 2.5% trabajador
 };
-// IHSS se descuenta mensual, pero se puede prorratear por quincena o semana
+const RAP_CONSOLIDADO = 178.55; // Monto consolidado en IVM (se resta del 1.5%)
+// RAP employee deduction: FEO3 = FIO3 = max(0, salary * 1.5% - 178.55)
+// Total employee = FEO3 + FIO3
+// RL (patrono) = salary * 4% (NOT deducted from employee)
+function calcRAP_monthly(salary) {
+  const feo3 = Math.max(0, salary * 0.015 - RAP_CONSOLIDADO);
+  const fio3 = feo3; // FIO3 = FEO3
+  const rl = salary * 0.04; // Patrono only
+  return { feo3, fio3, employeeTotal: feo3 + fio3, rl, grandTotal: rl + feo3 + fio3 };
+}
 function calcIHSS_monthly(salary) {
   const baseEM = Math.min(salary, IHSS.EM_TECHO);
   const baseIVM = Math.min(salary, IHSS.IVM_TECHO);
@@ -107,13 +116,29 @@ function calcIHSS_monthly(salary) {
   const ivm = baseIVM * IHSS.IVM_TASA;
   return { em, ivm, total: em + ivm };
 }
-function calcIHSS_weekly(salary) {
-  const m = calcIHSS_monthly(salary);
-  return { em: m.em / 4.33, ivm: m.ivm / 4.33, total: m.total / 4.33 };
-}
 function calcIHSS_biweekly(salary) {
   const m = calcIHSS_monthly(salary);
   return { em: m.em / 2, ivm: m.ivm / 2, total: m.total / 2 };
+}
+
+// Determine which week of the month a date range falls in (1-5)
+function getWeekOfMonth(dateStr) {
+  const d = new Date(dateStr + "T12:00:00");
+  const day = d.getDate();
+  if (day <= 7) return 1;
+  if (day <= 14) return 2;
+  if (day <= 21) return 3;
+  if (day <= 28) return 4;
+  return 5; // last week
+}
+function isLastWeekOfMonth(fromDate, toDate) {
+  const to = new Date(toDate + "T12:00:00");
+  const lastDay = new Date(to.getFullYear(), to.getMonth() + 1, 0).getDate();
+  return to.getDate() >= lastDay - 6; // within last 7 days of month
+}
+function isSecondWeekOfMonth(fromDate) {
+  const wk = getWeekOfMonth(fromDate);
+  return wk === 2;
 }
 function formatL(n) { if (n == null || isNaN(n)) return "L. 0.00"; return "L. " + Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function fN(n) { return (!n || isNaN(n) || n === 0) ? "" : Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -449,7 +474,11 @@ function ClockTab({ employees, clockEntries, refresh }) {
 
   // ─── Error detection ───
   const hasError = (entry) => {
-    if (!entry.checkIn || !entry.checkOut) return "Falta entrada o salida";
+    const dow = new Date(entry.date + "T12:00:00").getDay();
+    if (entry.checkIn && !entry.checkOut && dow === 5) return "⚠️ VIERNES SIN SALIDA — Editar y poner 5:00pm";
+    if (!entry.checkIn && !entry.checkOut) return "Sin marcaciones";
+    if (entry.checkIn && !entry.checkOut) return "Falta hora de salida";
+    if (!entry.checkIn && entry.checkOut) return "Falta hora de entrada";
     const hrs = calcDayHours(entry);
     if (hrs <= 0) return "0 horas registradas";
     if (hrs > 16) return "Más de 16 horas";
@@ -658,11 +687,17 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
       const fuel=+a.fuel||0, vacation=+a.vacation||0, incapacity=+a.incapacity||0;
       const advance=+a.advance||0, dec4=+a.dec4||0, dec3=+a.dec3||0, otherDed=+a.otherDed||0;
 
-      // IHSS weekly deduction
-      const ihss = calcIHSS_weekly(emp.salary);
+      // IHSS: only last week of the month (full monthly amount)
+      const applyIHSS = isLastWeekOfMonth(fs, ts);
+      const ihss = applyIHSS ? calcIHSS_monthly(emp.salary) : { em: 0, ivm: 0, total: 0 };
+
+      // RAP 1.5%: only second week of the month (full monthly amount)
+      const applyRAP = isSecondWeekOfMonth(fs);
+      const rapData = applyRAP ? calcRAP_monthly(emp.salary) : { feo3: 0, fio3: 0, employeeTotal: 0, rl: 0 };
+      const rap = rapData.employeeTotal; // Only employee portion is deducted
 
       const totalEarned = baseSalary + otPay + fuel + vacation + incapacity + dec4 + dec3;
-      const totalDeductions = ihss.total + advance + otherDed;
+      const totalDeductions = ihss.total + rap + advance + otherDed;
 
       return {
         employeeId: emp.id, name: emp.name, position: emp.position,
@@ -672,12 +707,15 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         effectiveHrs: totalEffective, baseSalary,
         ot, otPay,
         ihssEM: ihss.em, ihssIVM: ihss.ivm, ihssTotal: ihss.total,
+        rap, rapFeo3: rapData.feo3, rapFio3: rapData.fio3, rapRL: rapData.rl,
         fuel, vacation, incapacity, advance, dec4, dec3, otherDed,
         totalEarned, totalDeductions, netPay: totalEarned - totalDeductions,
       };
     });
 
-    setResult({ period: `WK${weekNum||"?"} ${from} al ${to}`, rows, from, to, weekNum, workingDaysInPeriod, holidaysInPeriod: holidayDates.size, holidayNames: Object.entries(holidayNames).map(([d,n])=>`${n} (${d})`) });
+    const applyIHSS = isLastWeekOfMonth(fs, ts);
+    const applyRAP = isSecondWeekOfMonth(fs);
+    setResult({ period: `WK${weekNum||"?"} ${from} al ${to}`, rows, from, to, weekNum, workingDaysInPeriod, holidaysInPeriod: holidayDates.size, holidayNames: Object.entries(holidayNames).map(([d,n])=>`${n} (${d})`), applyIHSS, applyRAP });
   };
 
   const doSave=async()=>{if(!result)return;setSaving(true);await db.savePayroll(result);await refresh();setSaving(false);alert("✅ Planilla guardada.")};
@@ -704,6 +742,8 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
             {result.holidaysInPeriod>0&&<div><span style={{color:"#64748b"}}>Feriados:</span> <strong style={{color:"#c9a227"}}>{result.holidaysInPeriod} (pagados)</strong></div>}
             <div><span style={{color:"#64748b"}}>Regla:</span> <strong style={{color:"#0a6847"}}>{result.workingDaysInPeriod}d trabajados = 7d pagados</strong></div>
             <div><span style={{color:"#64748b"}}>Falta:</span> <strong style={{color:"#b91c1c"}}>-2 días/ausencia</strong></div>
+            <div><span style={{color:"#64748b"}}>IHSS:</span> <strong style={{color:result.applyIHSS?"#7c3aed":"#94a3b8"}}>{result.applyIHSS?"✓ Aplica (última semana)":"No aplica esta semana"}</strong></div>
+            <div><span style={{color:"#64748b"}}>RAP 1.5%:</span> <strong style={{color:result.applyRAP?"#0369a1":"#94a3b8"}}>{result.applyRAP?"✓ Aplica (2da semana)":"No aplica esta semana"}</strong></div>
           </div>
           {result.holidayNames?.length>0&&(
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -720,7 +760,7 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
             </div>
           </div>
           <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Cód","Nombre","Pos.","Sal.M.","Trab.","Faltas","Pago","Salario","Tot.OT","IHSS","Devengado","Deducc.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
+            {["Cód","Nombre","Pos.","Sal.M.","Trab.","Faltas","Pago","Salario","Tot.OT","IHSS","RAP","Devengado","Deducc.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
           </tr></thead><tbody>
             {result.rows.map(r=><tr key={r.employeeId} style={r.absences>0?{background:"#fffbeb"}:{}}>
               <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td>
@@ -732,7 +772,10 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
               <td style={{...S.tdM,fontWeight:700,color:r.daysPaid<7?"#c9a227":"#0a2351"}}>{r.daysPaid}d</td>
               <td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td>
               <td style={{...S.tdM,fontWeight:700,color:r.otPay>0?"#b91c1c":"#d4d4d8"}}>{formatL(r.otPay)}</td>
-              <td style={{...S.tdM,color:"#7c3aed",fontSize:11}}>{formatL(r.ihssTotal)}</td>
+              <td style={{...S.tdM,color:"#7c3aed",fontSize:11}}>{r.ihssTotal>0?formatL(r.ihssTotal):"—"}</td>
+              <td style={{...S.tdM,color:"#0369a1",fontSize:11}} title={r.rap>0?`FEO3: ${formatL(r.rapFeo3)} + FIO3: ${formatL(r.rapFio3)}\nRL patrono: ${formatL(r.rapRL)}`:""}>
+                {r.rap>0?formatL(r.rap):"—"}
+              </td>
               <td style={{...S.tdM,fontWeight:600}}>{formatL(r.totalEarned)}</td>
               <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td>
               <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:13}}>{formatL(r.netPay)}</td>
@@ -742,6 +785,7 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
             <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.otPay,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td>
+            <td style={{...S.tdM,fontWeight:700,color:"#0369a1"}}>{formatL(result.rows.reduce((s,r)=>s+r.rap,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalEarned,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:15}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td>
