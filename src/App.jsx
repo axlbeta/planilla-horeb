@@ -9,7 +9,7 @@ const db = {
   async getEmployees() {
     const { data, error } = await supabase.from("employees").select("*").eq("active", true).order("id");
     if (error) { console.error("getEmployees:", error); return []; }
-    return data.map(e => ({ id: String(e.id), name: e.name, position: e.position, salary: parseFloat(e.salary) }));
+    return data.map(e => ({ id: String(e.id), name: e.name, position: e.position, salary: parseFloat(e.salary), empType: e.emp_type || "weekly" }));
   },
   async upsertEmployee(emp) {
     const { error } = await supabase.from("employees").upsert({ id: emp.id, name: emp.name, position: emp.position, salary: emp.salary, active: true, updated_at: new Date().toISOString() });
@@ -91,6 +91,30 @@ const db = {
 
 // ─── Helpers ───
 function getScheduledHours(dow) { return dow >= 1 && dow <= 4 ? 9 : dow === 5 ? 8 : 0; }
+
+// ─── IHSS & RAP Honduras 2025/2026 ───
+const IHSS = {
+  EM_TECHO: 11903.13,    // Techo Enfermedad y Maternidad
+  EM_TASA: 0.025,         // 2.5% trabajador
+  IVM_TECHO: 11903.13,   // Techo Invalidez, Vejez y Muerte
+  IVM_TASA: 0.025,        // 2.5% trabajador
+};
+// IHSS se descuenta mensual, pero se puede prorratear por quincena o semana
+function calcIHSS_monthly(salary) {
+  const baseEM = Math.min(salary, IHSS.EM_TECHO);
+  const baseIVM = Math.min(salary, IHSS.IVM_TECHO);
+  const em = baseEM * IHSS.EM_TASA;
+  const ivm = baseIVM * IHSS.IVM_TASA;
+  return { em, ivm, total: em + ivm };
+}
+function calcIHSS_weekly(salary) {
+  const m = calcIHSS_monthly(salary);
+  return { em: m.em / 4.33, ivm: m.ivm / 4.33, total: m.total / 4.33 };
+}
+function calcIHSS_biweekly(salary) {
+  const m = calcIHSS_monthly(salary);
+  return { em: m.em / 2, ivm: m.ivm / 2, total: m.total / 2 };
+}
 function formatL(n) { if (n == null || isNaN(n)) return "L. 0.00"; return "L. " + Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function fN(n) { return (!n || isNaN(n) || n === 0) ? "" : Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function fmtTime(t) { return t ? new Date(t).toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" }) : "—"; }
@@ -132,6 +156,7 @@ const TABS = [
   { id: "emp", label: "Empleados", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg> },
   { id: "clock", label: "Reloj", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
   { id: "pay", label: "Planilla", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> },
+  { id: "conf", label: "Confidencial", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> },
   { id: "hist", label: "Historial", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg> },
 ];
 
@@ -154,7 +179,7 @@ export default function App() {
     </div>
   );
 
-  const TabComp = { dash: DashboardTab, emp: EmployeesTab, clock: ClockTab, pay: PayrollTab, hist: HistoryTab }[tab];
+  const TabComp = { dash: DashboardTab, emp: EmployeesTab, clock: ClockTab, pay: PayrollTab, conf: ConfidentialTab, hist: HistoryTab }[tab];
 
   return (
     <div style={S.app}>
@@ -288,6 +313,7 @@ function StatCard({icon,label,value,accent}){return<div style={{...S.card,border
 
 // ═══ EMPLOYEES ═══
 function EmployeesTab({ employees, refresh }) {
+  const weeklyEmployees = employees.filter(e => (e.empType || "weekly") === "weekly");
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({ id:"",name:"",position:"",salary:"" });
   const [saving, setSaving] = useState(false);
@@ -297,7 +323,7 @@ function EmployeesTab({ employees, refresh }) {
   const doDelete=async(id)=>{if(confirm("¿Eliminar este empleado?")) {await db.deleteEmployee(id);await refresh()}};
   return (
     <div>
-      <div style={S.titleRow}><div style={S.pageHeader}><h2 style={S.title}>Empleados</h2><div style={S.goldLine}/></div><button style={S.btnPrimary} onClick={openAdd}>+ Nuevo Empleado</button></div>
+      <div style={S.titleRow}><div style={S.pageHeader}><h2 style={S.title}>Empleados (Semanal)</h2><div style={S.goldLine}/></div><button style={S.btnPrimary} onClick={openAdd}>+ Nuevo Empleado</button></div>
       {modal&&(<div style={S.overlay}><div style={S.modal}>
         <h3 style={S.modalTitle}>{modal==="new"?"Nuevo Empleado":"Editar Empleado"}</h3>
         <div style={S.formGrid}>
@@ -314,7 +340,7 @@ function EmployeesTab({ employees, refresh }) {
       <div style={S.card}><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
         {["Cód","Nombre","Posición","Salario Mensual","Salario Diario","Salario/Hora",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3&&i<=5?"right":"left"}}>{h}</th>)}
       </tr></thead><tbody>
-        {employees.map(e=><tr key={e.id}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600,color:"#0a2351"}}>{e.name}</td><td style={S.td}><span style={S.posBadge}>{e.position}</span></td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/30)}</td><td style={S.tdM}>{formatL(e.salary/30/8)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>)}
+        {weeklyEmployees.map(e=><tr key={e.id}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600,color:"#0a2351"}}>{e.name}</td><td style={S.td}><span style={S.posBadge}>{e.position}</span></td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/30)}</td><td style={S.tdM}>{formatL(e.salary/30/8)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>)}
       </tbody></table></div></div>
     </div>
   );
@@ -527,7 +553,8 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
       byEmp[e.employeeId].push(e);
     });
 
-    const rows = employees.map(emp => {
+    const weeklyEmps = employees.filter(e => (e.empType || "weekly") === "weekly");
+    const rows = weeklyEmps.map(emp => {
       const empEntries = byEmp[emp.id] || [];
 
       // Count days with valid check-in AND check-out (Mon-Fri only, excluding holidays)
@@ -582,8 +609,11 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
       const fuel=+a.fuel||0, vacation=+a.vacation||0, incapacity=+a.incapacity||0;
       const advance=+a.advance||0, dec4=+a.dec4||0, dec3=+a.dec3||0, otherDed=+a.otherDed||0;
 
+      // IHSS weekly deduction
+      const ihss = calcIHSS_weekly(emp.salary);
+
       const totalEarned = baseSalary + otPay + fuel + vacation + incapacity + dec4 + dec3;
-      const totalDeductions = advance + otherDed;
+      const totalDeductions = ihss.total + advance + otherDed;
 
       return {
         employeeId: emp.id, name: emp.name, position: emp.position,
@@ -592,6 +622,7 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         days: daysPaid,
         effectiveHrs: totalEffective, baseSalary,
         ot, otPay,
+        ihssEM: ihss.em, ihssIVM: ihss.ivm, ihssTotal: ihss.total,
         fuel, vacation, incapacity, advance, dec4, dec3, otherDed,
         totalEarned, totalDeductions, netPay: totalEarned - totalDeductions,
       };
@@ -640,7 +671,7 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
             </div>
           </div>
           <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Cód","Nombre","Posición","Sal.M.","Trab.","Faltas","Pago","Salario","OT 25%","OT 50%","OT 75%","OT 100%","Total OT","Devengado","Deducc.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
+            {["Cód","Nombre","Pos.","Sal.M.","Trab.","Faltas","Pago","Salario","Tot.OT","IHSS","Devengado","Deducc.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
           </tr></thead><tbody>
             {result.rows.map(r=><tr key={r.employeeId} style={r.absences>0?{background:"#fffbeb"}:{}}>
               <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td>
@@ -651,19 +682,17 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
               <td style={{...S.tdM,fontWeight:700,color:r.absences>0?"#dc2626":"#0a6847"}}>{r.absences>0?`${r.absences}d`:"—"}</td>
               <td style={{...S.tdM,fontWeight:700,color:r.daysPaid<7?"#c9a227":"#0a2351"}}>{r.daysPaid}d</td>
               <td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td>
-              <td style={{...S.tdM,color:r.ot[0.25]>0?"#c9a227":"#d4d4d8"}}>{r.ot[0.25]>0?r.ot[0.25].toFixed(1)+"h":"—"}</td>
-              <td style={{...S.tdM,color:r.ot[0.5]>0?"#ea580c":"#d4d4d8"}}>{r.ot[0.5]>0?r.ot[0.5].toFixed(1)+"h":"—"}</td>
-              <td style={{...S.tdM,color:r.ot[0.75]>0?"#dc2626":"#d4d4d8"}}>{r.ot[0.75]>0?r.ot[0.75].toFixed(1)+"h":"—"}</td>
-              <td style={{...S.tdM,color:r.ot[1.0]>0?"#7c3aed":"#d4d4d8"}}>{r.ot[1.0]>0?r.ot[1.0].toFixed(1)+"h":"—"}</td>
               <td style={{...S.tdM,fontWeight:700,color:r.otPay>0?"#b91c1c":"#d4d4d8"}}>{formatL(r.otPay)}</td>
+              <td style={{...S.tdM,color:"#7c3aed",fontSize:11}}>{formatL(r.ihssTotal)}</td>
               <td style={{...S.tdM,fontWeight:600}}>{formatL(r.totalEarned)}</td>
               <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td>
               <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:13}}>{formatL(r.netPay)}</td>
             </tr>)}
           </tbody><tfoot><tr style={{background:"#e8eef6"}}>
             <td colSpan={7} style={{...S.td,fontWeight:700,color:"#0a2351",textTransform:"uppercase",fontSize:11,letterSpacing:"0.05em"}}>Totales</td>
-            <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td><td colSpan={4}></td>
+            <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.otPay,0))}</td>
+            <td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalEarned,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:15}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td>
@@ -719,6 +748,179 @@ function HistoryTab({ payrolls, refresh }) {
             </tr></tfoot></table></div>
           </div>)}
       </>)}
+    </div>
+  );
+}
+
+// ═══ CONFIDENTIAL (Biweekly Payroll) ═══
+function ConfidentialTab({ employees, refresh }) {
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState({ id:"",name:"",position:"",salary:"" });
+  const [saving, setSaving] = useState(false);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [result, setResult] = useState(null);
+  const [adj, setAdj] = useState({});
+  const [paySaving, setPaySaving] = useState(false);
+
+  // Filter confidential employees (emp_type = 'biweekly')
+  const confEmployees = employees.filter(e => e.empType === "biweekly");
+
+  const openAdd=()=>{setForm({id:"",name:"",position:"",salary:""});setModal("new")};
+  const openEdit=(e)=>{setForm({...e,salary:String(e.salary)});setModal(e.id)};
+  const doSave=async()=>{
+    const emp={...form,salary:parseFloat(form.salary)||0};
+    if(!emp.id||!emp.name)return;
+    setSaving(true);
+    await supabase.from("employees").upsert({id:emp.id,name:emp.name,position:emp.position,salary:emp.salary,active:true,emp_type:"biweekly",updated_at:new Date().toISOString()});
+    await refresh();
+    setSaving(false);
+    setModal(null);
+  };
+  const doDelete=async(id)=>{if(confirm("¿Eliminar?")) {await supabase.from("employees").update({active:false}).eq("id",id);await refresh()}};
+
+  const generate = () => {
+    if (!from || !to) return alert("Selecciona las fechas de la quincena.");
+    const rows = confEmployees.map(emp => {
+      const biweeklySalary = emp.salary / 2; // Quincenal = mensual / 2
+      const ihss = calcIHSS_biweekly(emp.salary);
+      const a = adj[emp.id] || {};
+      const advance = +a.advance || 0, otherDed = +a.otherDed || 0;
+      const totalEarned = biweeklySalary;
+      const totalDeductions = ihss.total + advance + otherDed;
+      return {
+        employeeId: emp.id, name: emp.name, position: emp.position,
+        salary: emp.salary, baseSalary: biweeklySalary,
+        ihssEM: ihss.em, ihssIVM: ihss.ivm, ihssTotal: ihss.total,
+        advance, otherDed,
+        totalEarned, totalDeductions, netPay: totalEarned - totalDeductions,
+      };
+    });
+    setResult({ period: `Q ${from} al ${to}`, rows, from, to });
+  };
+
+  const doSavePayroll = async () => {
+    if (!result) return;
+    setPaySaving(true);
+    const { data: existing } = await supabase.from("payrolls_biweekly").select("id").eq("period", result.period).maybeSingle();
+    let pid;
+    if (existing) {
+      pid = existing.id;
+      await supabase.from("payroll_rows_biweekly").delete().eq("payroll_id", pid);
+      await supabase.from("payrolls_biweekly").update({ date_from: result.from, date_to: result.to, total_earned: result.rows.reduce((s,r)=>s+r.totalEarned,0), total_deductions: result.rows.reduce((s,r)=>s+r.totalDeductions,0), total_net: result.rows.reduce((s,r)=>s+r.netPay,0) }).eq("id", pid);
+    } else {
+      const { data } = await supabase.from("payrolls_biweekly").insert({ period: result.period, date_from: result.from, date_to: result.to, total_earned: result.rows.reduce((s,r)=>s+r.totalEarned,0), total_deductions: result.rows.reduce((s,r)=>s+r.totalDeductions,0), total_net: result.rows.reduce((s,r)=>s+r.netPay,0) }).select("id").single();
+      pid = data.id;
+    }
+    await supabase.from("payroll_rows_biweekly").insert(result.rows.map(r=>({ payroll_id:pid, employee_id:r.employeeId, name:r.name, position:r.position, salary:r.salary, base_salary:r.baseSalary, ihss_em:r.ihssEM, ihss_ivm:r.ihssIVM, ihss_total:r.ihssTotal, other_ded:r.otherDed, total_earned:r.totalEarned, total_deductions:r.totalDeductions, net_pay:r.netPay })));
+    setPaySaving(false);
+    alert("✅ Planilla quincenal guardada.");
+  };
+
+  const updAdj=(eId,f,v)=>setAdj(p=>({...p,[eId]:{...(p[eId]||{}),[f]:v}}));
+
+  const printConf = () => {
+    if (!result) return;
+    const rows = result.rows;
+    const totals = { base: rows.reduce((s,r)=>s+r.baseSalary,0), ihss: rows.reduce((s,r)=>s+r.ihssTotal,0), earned: rows.reduce((s,r)=>s+r.totalEarned,0), ded: rows.reduce((s,r)=>s+r.totalDeductions,0), net: rows.reduce((s,r)=>s+r.netPay,0) };
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Planilla Quincenal ${result.period}</title><style>@page{size:landscape;margin:12mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9pt}.header{text-align:center;margin-bottom:12px}.header img{height:40px;margin-bottom:6px}.header h2{font-size:11pt;color:#1a3a6b}.header .period{font-size:10pt;margin-top:4px;font-weight:bold;color:#0a2351}table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#0a2351;color:#fff;padding:5px 4px;font-size:8pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:4px;border:1px solid #c8d6e5;font-size:8pt}.r{text-align:right;font-family:'Courier New',monospace}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351}.net{color:#0a6847;font-weight:700}.signatures{margin-top:40px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:200px}.sig-line{border-top:1px solid #000;margin-top:50px;padding-top:4px;font-size:9pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.print-btn{padding:10px 24px;background:#0a2351;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;margin-right:8px}.close-btn{padding:10px 24px;background:#64748b;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer}</style></head><body><div class="no-print"><button class="print-btn" onclick="window.print()">🖨️ Imprimir</button><button class="close-btn" onclick="window.close()">✕ Cerrar</button></div><div class="header"><img src="${LOGO}" alt="Horeb"/><h2>Planilla Quincenal — Empleados Confidenciales</h2><div class="period">${result.period}</div></div><table><thead><tr><th>Cód.</th><th>Nombre</th><th>Posición</th><th>Sal.Mensual</th><th>Sal.Quincenal</th><th>IHSS EM</th><th>IHSS IVM</th><th>Total IHSS</th><th>Adelanto</th><th>Otras Ded.</th><th>Total Ded.</th><th>Neto</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td><td class="r">${fN(r.salary)}</td><td class="r">${fN(r.baseSalary)}</td><td class="r">${fN(r.ihssEM)}</td><td class="r">${fN(r.ihssIVM)}</td><td class="r">${fN(r.ihssTotal)}</td><td class="r">${fN(r.advance)}</td><td class="r">${fN(r.otherDed)}</td><td class="r">${fN(r.totalDeductions)}</td><td class="r net">${fN(r.netPay)}</td></tr>`).join("")}<tr class="total-row"><td colspan="4" style="text-align:right">TOTALES</td><td class="r">${fN(totals.base)}</td><td colspan="2"></td><td class="r">${fN(totals.ihss)}</td><td colspan="2"></td><td class="r">${fN(totals.ded)}</td><td class="r net">${fN(totals.net)}</td></tr></tbody></table><div class="signatures"><div class="sig-box"><div class="sig-line">Elaborado por</div></div><div class="sig-box"><div class="sig-line">Revisado por</div></div><div class="sig-box"><div class="sig-line">Autorizado por</div></div></div></body></html>`;
+    const w = window.open("","_blank"); if(w){w.document.write(html);w.document.close()}
+  };
+
+  return (
+    <div>
+      <div style={S.pageHeader}><h2 style={S.title}>Planilla Confidencial (Quincenal)</h2><div style={S.goldLine}/></div>
+
+      {/* Confidential Employees */}
+      <div style={S.card}>
+        <div style={S.titleRow}><h3 style={S.cardTitle}><span style={S.cardTitleIcon}>🔒</span> Empleados Confidenciales</h3><button style={S.btnPrimary} onClick={openAdd}>+ Agregar</button></div>
+        <p style={{fontSize:12,color:"#64748b",marginBottom:12}}>Empleados de confianza que no marcan reloj. Pago quincenal (salario mensual ÷ 2).</p>
+
+        {modal&&(<div style={S.overlay}><div style={S.modal}>
+          <h3 style={S.modalTitle}>{modal==="new"?"Nuevo Empleado Confidencial":"Editar"}</h3>
+          <div style={S.formGrid}>
+            <Field label="Código" value={form.id} onChange={v=>setForm({...form,id:v})} ph="C01" disabled={modal!=="new"}/>
+            <Field label="Nombre" value={form.name} onChange={v=>setForm({...form,name:v})} ph="Nombre completo"/>
+            <Field label="Posición" value={form.position} onChange={v=>setForm({...form,position:v})} ph="Gerente"/>
+            <Field label="Salario Mensual" value={form.salary} onChange={v=>setForm({...form,salary:v})} ph="0.00" type="number"/>
+          </div>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24}}>
+            <button style={S.btnSec} onClick={()=>setModal(null)}>Cancelar</button>
+            <button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"Guardando...":"Guardar"}</button>
+          </div>
+        </div></div>)}
+
+        {confEmployees.length===0?<p style={{color:"#94a3b8",fontStyle:"italic"}}>No hay empleados confidenciales registrados.</p>:(
+          <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
+            {["Cód","Nombre","Posición","Sal. Mensual","Sal. Quincenal","IHSS/Quincena",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3?"right":"left"}}>{h}</th>)}
+          </tr></thead><tbody>
+            {confEmployees.map(e=>{const ihss=calcIHSS_biweekly(e.salary);return(
+              <tr key={e.id}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600,color:"#0a2351"}}>{e.name}</td><td style={S.td}><span style={S.posBadge}>{e.position}</span></td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/2)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(ihss.total)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>
+            )})}
+          </tbody></table></div>
+        )}
+      </div>
+
+      {/* Generate Biweekly Payroll */}
+      <div style={S.card}>
+        <h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📋</span> Generar Planilla Quincenal</h3>
+        <div style={S.formGrid}>
+          <Field label="Desde" value={from} onChange={setFrom} type="date"/>
+          <Field label="Hasta" value={to} onChange={setTo} type="date"/>
+          <div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div>
+        </div>
+      </div>
+
+      {result&&(
+        <div style={S.card}>
+          <div style={S.titleRow}><h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📋</span> {result.period}</h3>
+            <div style={{display:"flex",gap:8}}>
+              <button style={S.btnGold} onClick={printConf}>🖨️ Imprimir</button>
+              <button style={S.btnPrimary} onClick={doSavePayroll} disabled={paySaving}>{paySaving?"Guardando...":"💾 Guardar"}</button>
+            </div>
+          </div>
+          <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
+            {["Cód","Nombre","Posición","Sal.Mensual","Quincenal","IHSS EM","IHSS IVM","Tot.IHSS","Adelanto","Otras Ded.","Tot.Ded.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
+          </tr></thead><tbody>
+            {result.rows.map(r=><tr key={r.employeeId}>
+              <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td>
+              <td style={{...S.td,fontWeight:600,color:"#0a2351",whiteSpace:"nowrap"}}>{r.name}</td>
+              <td style={{...S.td,fontSize:11}}>{r.position}</td>
+              <td style={S.tdM}>{formatL(r.salary)}</td>
+              <td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td>
+              <td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssEM)}</td>
+              <td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssIVM)}</td>
+              <td style={{...S.tdM,fontWeight:600,color:"#7c3aed"}}>{formatL(r.ihssTotal)}</td>
+              <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.advance)}</td>
+              <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.otherDed)}</td>
+              <td style={{...S.tdM,fontWeight:600,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td>
+              <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:13}}>{formatL(r.netPay)}</td>
+            </tr>)}
+          </tbody><tfoot><tr style={{background:"#e8eef6"}}>
+            <td colSpan={4} style={{...S.td,fontWeight:700,color:"#0a2351",textTransform:"uppercase",fontSize:11}}>Totales</td>
+            <td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td>
+            <td colSpan={2}></td>
+            <td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td>
+            <td colSpan={2}></td>
+            <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td>
+            <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:15}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td>
+          </tr></tfoot></table></div>
+
+          {/* Adjustments */}
+          <div style={{marginTop:16}}>
+            <h4 style={{fontSize:13,fontWeight:700,color:"#475569",marginBottom:8}}>Ajustes</h4>
+            <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
+              {["Empleado","Adelanto","Otras Ded."].map((h,i)=><th key={i} style={S.th}>{h}</th>)}
+            </tr></thead><tbody>
+              {confEmployees.map(emp=>{const a=adj[emp.id]||{};return(<tr key={emp.id}>
+                <td style={{...S.td,fontWeight:600,fontSize:12,color:"#0a2351"}}>{emp.name}</td>
+                {["advance","otherDed"].map(f=><td key={f} style={S.td}><input style={{...S.input,width:100,padding:"5px 8px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0.00"/></td>)}
+              </tr>)})}
+            </tbody></table></div>
+            <p style={{fontSize:11,color:"#64748b",marginTop:6}}>Ingresa ajustes y genera de nuevo para recalcular.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
