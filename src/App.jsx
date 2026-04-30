@@ -952,20 +952,33 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         return dow >= 1 && dow <= 5 && !isHoliday && !isFirstFriday;
       }).length;
 
-      // Total days worked = clocked days + holidays (holidays count as worked)
-      const daysWorked = clockedDays + holidaysOnWeekdays;
+      // Count holidays on weekdays directly here (bulletproof)
+      let empHolidayCount = 0;
+      {
+        const start = new Date(fs + "T12:00:00");
+        const end = new Date(ts + "T12:00:00");
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          const dow = d.getDay();
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, "0");
+          const dd = String(d.getDate()).padStart(2, "0");
+          const dateStr = `${yyyy}-${mm}-${dd}`;
+          const isFirstFriday = dateStr === fs && dow === 5;
+          if (dow >= 1 && dow <= 5 && !isFirstFriday && holidayDates.has(dateStr)) empHolidayCount++;
+        }
+      }
+
+      // Total days worked = clocked days + holidays (holidays auto-count as worked)
+      const daysWorked = clockedDays + empHolidayCount;
 
       // How many holidays fell in this period
       const holidaysInPeriod = holidayDates.size;
 
-      // Pay logic: 
-      // workingDaysInPeriod = total weekdays (Mon-Fri) excluding first Friday (includes holidays)
-      // daysWorked = clocked days + holidays
-      // If daysWorked >= workingDaysInPeriod → 0 absences → 7 days paid
+      // Pay logic
       const absences = Math.max(0, workingDaysInPeriod - daysWorked);
       const daysPaid = Math.max(0, 7 - (absences * 2));
 
-      console.log(`[${emp.name}] clocked=${clockedDays} holidays=${holidaysOnWeekdays} worked=${daysWorked} required=${workingDaysInPeriod} absences=${absences} paid=${daysPaid}`);
+      console.log(`[${emp.name}] clocked=${clockedDays} holidays=${empHolidayCount} worked=${daysWorked} required=${workingDaysInPeriod} absences=${absences} paid=${daysPaid}`);
 
       const daily = emp.salary / 30;
       const hourly = daily / 8;
