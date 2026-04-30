@@ -816,11 +816,15 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
     console.log("All holidays:", holidays.map(h => h.date + " " + h.name));
     console.log("Holidays in period:", [...holidayDates]);
 
-    // Count working days in period (Mon-Fri, excluding holidays)
+    // Count working days in period
+    // IMPORTANT: The first Friday is only for OT calculation from previous week (after 5pm)
+    // It does NOT count as a required work day for this week
+    // Working days = Monday to Thursday + last Friday (if not holiday)
     const workingDaysInPeriod = (() => {
       let count = 0;
       const start = new Date(fs + "T12:00:00");
       const end = new Date(ts + "T12:00:00");
+      const firstDate = fs; // first day of period (the starting Friday)
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const dow = d.getDay();
         const yyyy = d.getFullYear();
@@ -829,10 +833,11 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         const dateStr = `${yyyy}-${mm}-${dd}`;
         const isHoliday = holidayDates.has(dateStr);
         const isWeekday = dow >= 1 && dow <= 5;
-        console.log(`  ${dateStr} (dow=${dow}): weekday=${isWeekday}, holiday=${isHoliday}, counts=${isWeekday && !isHoliday}`);
-        if (isWeekday && !isHoliday) count++;
+        // Skip the first Friday (it's only for OT from previous week)
+        const isFirstFriday = dateStr === firstDate && dow === 5;
+        const counts = isWeekday && !isHoliday && !isFirstFriday;
+        if (counts) count++;
       }
-      console.log("Working days in period:", count);
       return count;
     })();
 
@@ -892,12 +897,13 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         return e;
       });
 
-      // Count days with valid check-in AND check-out (Mon-Fri only, excluding holidays)
+      // Count days with valid check-in AND check-out (Mon-Fri only, excluding holidays and first Friday)
       const daysWorked = empEntries.filter(e => {
         if (!e.checkIn || !e.checkOut) return false;
         const dow = new Date(e.date + "T12:00:00").getDay();
         const isHoliday = holidayDates.has(e.date);
-        return dow >= 1 && dow <= 5 && !isHoliday;
+        const isFirstFriday = e.date === fs && dow === 5;
+        return dow >= 1 && dow <= 5 && !isHoliday && !isFirstFriday;
       }).length;
 
       // How many holidays fell in this period (these are paid automatically)
