@@ -266,8 +266,43 @@ function calcOvertime(entries) {
   results[empId] = { totalEffective, regularDays, ot }; }); return results;
 }
 function printPayroll(payroll) {
-  const rows = payroll.rows; const totals = { salary: rows.reduce((s, r) => s + (r.salary || 0), 0), base: rows.reduce((s, r) => s + r.baseSalary, 0), ot: rows.reduce((s, r) => s + r.otPay, 0), earned: rows.reduce((s, r) => s + r.totalEarned, 0), ded: rows.reduce((s, r) => s + r.totalDeductions, 0), net: rows.reduce((s, r) => s + r.netPay, 0) };
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Planilla ${payroll.period}</title><style>@page{size:landscape;margin:12mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9pt;color:#000}.header{text-align:center;margin-bottom:12px}.header img{height:40px;margin-bottom:6px}.header h2{font-size:11pt;font-weight:normal;color:#1a3a6b}.header .period{font-size:10pt;margin-top:4px;font-weight:bold;color:#0a2351}table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#0a2351;color:#fff;padding:5px 4px;font-size:7.5pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:4px;border:1px solid #c8d6e5;font-size:8pt}.r{text-align:right;font-family:'Courier New',monospace;font-size:8pt}.c{text-align:center}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351;padding:6px 4px}.net{color:#0a6847;font-weight:700;font-size:9pt}.ot-val{color:#b91c1c}.signatures{margin-top:40px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:200px}.sig-line{border-top:1px solid #000;margin-top:50px;padding-top:4px;font-size:9pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.print-btn{padding:10px 24px;background:#0a2351;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;margin-right:8px}.close-btn{padding:10px 24px;background:#64748b;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer}</style></head><body><div class="no-print"><button class="print-btn" onclick="window.print()">🖨️ Imprimir</button><button class="close-btn" onclick="window.close()">✕ Cerrar</button></div><div class="header"><img src="${LOGO}" alt="Horeb"/><h2>Planilla de Empleados</h2><div class="period">${payroll.period}</div></div><table><thead><tr><th rowspan="2">Cód.</th><th rowspan="2">Nombre</th><th rowspan="2">Posición</th><th rowspan="2">Sal.Mensual</th><th rowspan="2">Sal.Diario</th><th rowspan="2">Días</th><th rowspan="2">Salario</th><th colspan="4">Horas Extras</th><th rowspan="2">Sal/Hr</th><th rowspan="2">Total Extras</th><th rowspan="2">Comb.</th><th rowspan="2">Vac.</th><th rowspan="2">Incap.</th><th rowspan="2">Adelanto</th><th rowspan="2">Dec.4to</th><th rowspan="2">Dec.3ro</th><th rowspan="2">Devengado</th><th rowspan="2">Otras Ded.</th><th rowspan="2">Neto</th></tr><tr><th>25%</th><th>50%</th><th>75%</th><th>100%</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td><td class="r">${fN(r.salary)}</td><td class="r">${fN(r.daily)}</td><td class="c">${r.days}</td><td class="r">${fN(r.baseSalary)}</td><td class="r${r.ot[0.25]>0?' ot-val':''}">${r.ot[0.25]>0?r.ot[0.25].toFixed(1):''}</td><td class="r${r.ot[0.5]>0?' ot-val':''}">${r.ot[0.5]>0?r.ot[0.5].toFixed(1):''}</td><td class="r${r.ot[0.75]>0?' ot-val':''}">${r.ot[0.75]>0?r.ot[0.75].toFixed(1):''}</td><td class="r${r.ot[1.0]>0?' ot-val':''}">${r.ot[1.0]>0?r.ot[1.0].toFixed(1):''}</td><td class="r">${fN(r.hourly)}</td><td class="r ot-val">${fN(r.otPay)}</td><td class="r">${fN(r.fuel)}</td><td class="r">${fN(r.vacation)}</td><td class="r">${fN(r.incapacity)}</td><td class="r">${fN(r.advance)}</td><td class="r">${fN(r.dec4)}</td><td class="r">${fN(r.dec3)}</td><td class="r" style="font-weight:600">${fN(r.totalEarned)}</td><td class="r">${fN(r.otherDed)}</td><td class="r net">${fN(r.netPay)}</td></tr>`).join("")}<tr class="total-row"><td colspan="3" style="text-align:right">TOTALES</td><td class="r">${fN(totals.salary)}</td><td></td><td></td><td class="r">${fN(totals.base)}</td><td colspan="4"></td><td></td><td class="r ot-val">${fN(totals.ot)}</td><td colspan="6"></td><td class="r" style="font-weight:700">${fN(totals.earned)}</td><td class="r">${fN(totals.ded)}</td><td class="r net" style="font-size:10pt">${fN(totals.net)}</td></tr></tbody></table><div class="signatures"><div class="sig-box"><div class="sig-line">Elaborado por</div></div><div class="sig-box"><div class="sig-line">Revisado por</div></div><div class="sig-box"><div class="sig-line">Autorizado por</div></div></div></body></html>`;
+  const rows = payroll.rows;
+  const totals = { salary: rows.reduce((s,r)=>s+(r.salary||0),0), base: rows.reduce((s,r)=>s+r.baseSalary,0), ot: rows.reduce((s,r)=>s+r.otPay,0), ihss: rows.reduce((s,r)=>s+(r.ihssTotal||0),0), rap: rows.reduce((s,r)=>s+(r.rap||0),0), earned: rows.reduce((s,r)=>s+r.totalEarned,0), ded: rows.reduce((s,r)=>s+r.totalDeductions,0), net: rows.reduce((s,r)=>s+r.netPay,0) };
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Planilla ${payroll.period}</title>
+<style>@page{size:landscape;margin:10mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:8pt;color:#000}.header{text-align:center;margin-bottom:10px}.header img{height:36px;margin-bottom:4px}.header h2{font-size:10pt;font-weight:normal;color:#1a3a6b}.header .period{font-size:9pt;margin-top:3px;font-weight:bold;color:#0a2351}table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#0a2351;color:#fff;padding:4px 3px;font-size:6.5pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:3px;border:1px solid #c8d6e5;font-size:7.5pt}.r{text-align:right;font-family:'Courier New',monospace;font-size:7.5pt}.c{text-align:center}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351;padding:5px 3px}.net{color:#0a6847;font-weight:700}.ot-val{color:#b91c1c}.ihss{color:#6d28d9}.signatures{margin-top:30px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:180px}.sig-line{border-top:1px solid #000;margin-top:40px;padding-top:3px;font-size:8pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.print-btn{padding:8px 20px;background:#0a2351;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:6px}.close-btn{padding:8px 20px;background:#64748b;color:#fff;border:none;border-radius:8px;font-size:12px;cursor:pointer}</style></head><body>
+<div class="no-print"><button class="print-btn" onclick="window.print()">🖨️ Imprimir</button><button class="close-btn" onclick="window.close()">✕ Cerrar</button></div>
+<div class="header"><img src="${LOGO}" alt="Horeb"/><h2>Planilla de Empleados</h2><div class="period">${payroll.period}</div></div>
+<table><thead><tr>
+<th rowspan="2">Cód.</th><th rowspan="2">Nombre</th><th rowspan="2">Posición</th><th rowspan="2">Sal.Mensual</th><th rowspan="2">Sal.Diario</th><th rowspan="2">Días</th><th rowspan="2">Salario</th>
+<th colspan="4">Horas Extras</th><th rowspan="2">Sal/Hr</th><th rowspan="2">Total Extras</th>
+<th rowspan="2">Comb.</th><th rowspan="2">Vac.</th><th rowspan="2">Incap.</th><th rowspan="2">Adelanto</th><th rowspan="2">Dec.4to</th><th rowspan="2">Dec.3ro</th>
+<th rowspan="2">IHSS</th><th rowspan="2">RAP</th>
+<th rowspan="2">Devengado</th><th rowspan="2">Tot.Ded.</th><th rowspan="2">Neto</th>
+</tr><tr><th>25%</th><th>50%</th><th>75%</th><th>100%</th></tr></thead><tbody>
+${rows.map(r=>`<tr>
+<td class="c">${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td>
+<td class="r">${fN(r.salary)}</td><td class="r">${fN(r.daily)}</td><td class="c">${r.days}</td><td class="r">${fN(r.baseSalary)}</td>
+<td class="r${r.ot[0.25]>0?' ot-val':''}">${r.ot[0.25]>0?r.ot[0.25].toFixed(1):''}</td>
+<td class="r${r.ot[0.5]>0?' ot-val':''}">${r.ot[0.5]>0?r.ot[0.5].toFixed(1):''}</td>
+<td class="r${r.ot[0.75]>0?' ot-val':''}">${r.ot[0.75]>0?r.ot[0.75].toFixed(1):''}</td>
+<td class="r${r.ot[1.0]>0?' ot-val':''}">${r.ot[1.0]>0?r.ot[1.0].toFixed(1):''}</td>
+<td class="r">${fN(r.hourly)}</td><td class="r ot-val">${fN(r.otPay)}</td>
+<td class="r">${fN(r.fuel)}</td><td class="r">${fN(r.vacation)}</td><td class="r">${fN(r.incapacity)}</td>
+<td class="r">${fN(r.advance)}</td><td class="r">${fN(r.dec4)}</td><td class="r">${fN(r.dec3)}</td>
+<td class="r ihss">${fN(r.ihssTotal)}</td><td class="r ihss">${fN(r.rap)}</td>
+<td class="r" style="font-weight:600">${fN(r.totalEarned)}</td>
+<td class="r">${fN(r.totalDeductions)}</td>
+<td class="r net">${fN(r.netPay)}</td>
+</tr>`).join("")}
+<tr class="total-row">
+<td colspan="3" style="text-align:right">TOTALES</td><td class="r">${fN(totals.salary)}</td><td></td><td></td><td class="r">${fN(totals.base)}</td>
+<td colspan="4"></td><td></td><td class="r ot-val">${fN(totals.ot)}</td>
+<td colspan="6"></td>
+<td class="r ihss">${fN(totals.ihss)}</td><td class="r ihss">${fN(totals.rap)}</td>
+<td class="r" style="font-weight:700">${fN(totals.earned)}</td><td class="r">${fN(totals.ded)}</td>
+<td class="r net" style="font-size:9pt">${fN(totals.net)}</td>
+</tr></tbody></table>
+<div class="signatures"><div class="sig-box"><div class="sig-line">Elaborado por</div></div><div class="sig-box"><div class="sig-line">Revisado por</div></div><div class="sig-box"><div class="sig-line">Autorizado por</div></div></div></body></html>`;
   const w = window.open("", "_blank"); if (w) { w.document.write(html); w.document.close(); }
 }
 
@@ -812,7 +847,7 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
     const holidayDates = new Set(holidays.filter(h => h.date >= fs && h.date <= ts).map(h => h.date));
     const holidayNames = {};
     holidays.forEach(h => { if (h.date >= fs && h.date <= ts) holidayNames[h.date] = h.name; });
-    console.log("Period:", fs, "to", ts);
+    console.log("holidaysOnWeekdays:", holidaysOnWeekdays, "workingDaysInPeriod:", workingDaysInPeriod);
     console.log("All holidays:", holidays.map(h => h.date + " " + h.name));
     console.log("Holidays in period:", [...holidayDates]);
 
@@ -933,6 +968,8 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
       // If daysWorked >= workingDaysInPeriod → 0 absences → 7 days paid
       const absences = Math.max(0, workingDaysInPeriod - daysWorked);
       const daysPaid = Math.max(0, 7 - (absences * 2));
+
+      console.log(`[${emp.name}] clocked=${clockedDays} holidays=${holidaysOnWeekdays} worked=${daysWorked} required=${workingDaysInPeriod} absences=${absences} paid=${daysPaid}`);
 
       const daily = emp.salary / 30;
       const hourly = daily / 8;
