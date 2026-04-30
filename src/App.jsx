@@ -931,12 +931,14 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
 
       // Regular clock employees
       let empEntries = (byEmp[emp.id] || []).map(e => {
-        // Auto-fill: Friday with checkIn but no checkOut → set checkOut to 5:00pm
+        // Auto-fill: if has checkIn but no checkOut, set scheduled exit time
+        // Mon-Thu = 6:00pm (18:00), Friday = 5:00pm (17:00)
         if (e.checkIn && !e.checkOut) {
           const dow = new Date(e.date + "T12:00:00").getDay();
-          if (dow === 5) { // Friday
-            fridayAutoFills.push({ name: emp.name, date: e.date });
-            return { ...e, checkOut: `${e.date}T17:00:00`, autoFilled: true };
+          if (dow >= 1 && dow <= 5) {
+            const exitTime = dow === 5 ? "17:00:00" : "18:00:00";
+            fridayAutoFills.push({ name: emp.name, date: e.date, time: dow === 5 ? "5:00pm" : "6:00pm" });
+            return { ...e, checkOut: `${e.date}T${exitTime}`, autoFilled: true };
           }
         }
         return e;
@@ -1095,14 +1097,14 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
           )}
         </div>
 
-        {/* Friday auto-fill warnings */}
+        {/* Auto-fill warnings */}
         {result.fridayAutoFills?.length > 0 && (
           <div style={{...S.card, background:"#fffbeb", border:"1px solid #fde68a"}}>
-            <h4 style={{fontSize:13,fontWeight:700,color:"#92400e",marginBottom:8}}>⚠️ Viernes con salida auto-completada a 5:00pm</h4>
-            <p style={{fontSize:12,color:"#a16207",marginBottom:8}}>Los siguientes empleados tenían marca de entrada el viernes pero no de salida. Se usó 5:00pm como hora de salida para el cálculo. Verifica que sea correcto.</p>
+            <h4 style={{fontSize:13,fontWeight:700,color:"#92400e",marginBottom:8}}>⚠️ Salida auto-completada</h4>
+            <p style={{fontSize:12,color:"#a16207",marginBottom:8}}>Los siguientes empleados tenían marca de entrada pero no de salida. Se usó la hora de salida programada (L-J: 6:00pm, Viernes: 5:00pm). Verifica que sea correcto.</p>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {result.fridayAutoFills.map((f,i) => (
-                <span key={i} style={{padding:"4px 12px",background:"#fff",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e",fontWeight:600}}>{f.name} — {fmtDate(f.date+"T12:00:00")}</span>
+                <span key={i} style={{padding:"4px 12px",background:"#fff",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e",fontWeight:600}}>{f.name} — {fmtDate(f.date+"T12:00:00")} → {f.time}</span>
               ))}
             </div>
           </div>
