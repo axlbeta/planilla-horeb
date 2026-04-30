@@ -248,7 +248,7 @@ function calcOvertime(entries) {
     // Saturday = 25%
     if (dow === 6) { ot[0.25] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; }
     regularDays++; totalEffective += hrs; if (hrs <= scheduled + GRACE) return;
-    const extra = hrs - scheduled - GRACE;
+    const extra = hrs - scheduled;
     const cH = new Date(day.checkOut).getHours() + new Date(day.checkOut).getMinutes() / 60;
     // 6pm-7pm (18-19) = 25%, 7:01pm-9pm (19-21) = 50%, 9pm-5am (21-5) = 75%
     if (cH <= 19) { ot[0.25] += extra; }
@@ -1009,8 +1009,11 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
 
         const scheduled = getScheduledHours(dow);
         const GRACE = 10/60; // 10 min grace period
+        // Grace only determines IF there is overtime
+        // If hours <= scheduled + grace → no overtime at all
+        // If hours > scheduled + grace → calculate OT from scheduled (not scheduled+grace)
         if (hrs <= scheduled + GRACE) return;
-        const extra = hrs - scheduled - GRACE;
+        const extra = hrs - scheduled;
         const cH = new Date(entry.checkOut).getHours() + new Date(entry.checkOut).getMinutes() / 60;
         // 6pm-7pm (18-19) = 25%, 7:01pm-9pm (19-21) = 50%, 9pm-5am (21-5) = 75%
         if (cH <= 19) { ot[0.25] += extra; }
