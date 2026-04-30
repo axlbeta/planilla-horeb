@@ -816,27 +816,41 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
     console.log("All holidays:", holidays.map(h => h.date + " " + h.name));
     console.log("Holidays in period:", [...holidayDates]);
 
-    // Count working days in period
-    // IMPORTANT: The first Friday is only for OT calculation from previous week (after 5pm)
-    // It does NOT count as a required work day for this week
-    // Working days = Monday to Thursday + last Friday (if not holiday)
+    // Count working days in period (Mon-Fri, excluding first Friday)
+    // NOTE: Holidays ARE counted as working days (they are paid and count as "worked")
+    // The employee only needs clock entries for non-holiday weekdays
     const workingDaysInPeriod = (() => {
       let count = 0;
       const start = new Date(fs + "T12:00:00");
       const end = new Date(ts + "T12:00:00");
-      const firstDate = fs; // first day of period (the starting Friday)
+      const firstDate = fs;
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const dow = d.getDay();
         const yyyy = d.getFullYear();
         const mm = String(d.getMonth() + 1).padStart(2, "0");
         const dd = String(d.getDate()).padStart(2, "0");
         const dateStr = `${yyyy}-${mm}-${dd}`;
-        const isHoliday = holidayDates.has(dateStr);
         const isWeekday = dow >= 1 && dow <= 5;
-        // Skip the first Friday (it's only for OT from previous week)
         const isFirstFriday = dateStr === firstDate && dow === 5;
-        const counts = isWeekday && !isHoliday && !isFirstFriday;
-        if (counts) count++;
+        // Count ALL weekdays except first Friday (holidays included as they count as worked)
+        if (isWeekday && !isFirstFriday) count++;
+      }
+      return count;
+    })();
+
+    // Count how many holidays fall on weekdays in this period (excluding first Friday)
+    const holidaysOnWeekdays = (() => {
+      let count = 0;
+      const start = new Date(fs + "T12:00:00");
+      const end = new Date(ts + "T12:00:00");
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dow = d.getDay();
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        const dateStr = `${yyyy}-${mm}-${dd}`;
+        const isFirstFriday = dateStr === fs && dow === 5;
+        if (dow >= 1 && dow <= 5 && !isFirstFriday && holidayDates.has(dateStr)) count++;
       }
       return count;
     })();
@@ -897,8 +911,9 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         return e;
       });
 
-      // Count days with valid check-in AND check-out (Mon-Fri only, excluding holidays and first Friday)
-      const daysWorked = empEntries.filter(e => {
+      // Count days with valid clock entries (Mon-Fri, excluding holidays and first Friday)
+      // Holidays are NOT required to have clock entries - they count as worked automatically
+      const clockedDays = empEntries.filter(e => {
         if (!e.checkIn || !e.checkOut) return false;
         const dow = new Date(e.date + "T12:00:00").getDay();
         const isHoliday = holidayDates.has(e.date);
@@ -906,12 +921,16 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
         return dow >= 1 && dow <= 5 && !isHoliday && !isFirstFriday;
       }).length;
 
-      // How many holidays fell in this period (these are paid automatically)
+      // Total days worked = clocked days + holidays (holidays count as worked)
+      const daysWorked = clockedDays + holidaysOnWeekdays;
+
+      // How many holidays fell in this period
       const holidaysInPeriod = holidayDates.size;
 
-      // Pay logic: working days required = workingDaysInPeriod (Mon-Fri minus holidays)
-      // If employee worked all required days → 7 days paid
-      // Each absence → -2 days from pay
+      // Pay logic: 
+      // workingDaysInPeriod = total weekdays (Mon-Fri) excluding first Friday (includes holidays)
+      // daysWorked = clocked days + holidays
+      // If daysWorked >= workingDaysInPeriod → 0 absences → 7 days paid
       const absences = Math.max(0, workingDaysInPeriod - daysWorked);
       const daysPaid = Math.max(0, 7 - (absences * 2));
 
