@@ -812,6 +812,9 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
     const holidayDates = new Set(holidays.filter(h => h.date >= fs && h.date <= ts).map(h => h.date));
     const holidayNames = {};
     holidays.forEach(h => { if (h.date >= fs && h.date <= ts) holidayNames[h.date] = h.name; });
+    console.log("Period:", fs, "to", ts);
+    console.log("All holidays:", holidays.map(h => h.date + " " + h.name));
+    console.log("Holidays in period:", [...holidayDates]);
 
     // Count working days in period (Mon-Fri, excluding holidays)
     const workingDaysInPeriod = (() => {
@@ -820,9 +823,16 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
       const end = new Date(ts + "T12:00:00");
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const dow = d.getDay();
-        const dateStr = d.toISOString().slice(0, 10);
-        if (dow >= 1 && dow <= 5 && !holidayDates.has(dateStr)) count++;
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        const dateStr = `${yyyy}-${mm}-${dd}`;
+        const isHoliday = holidayDates.has(dateStr);
+        const isWeekday = dow >= 1 && dow <= 5;
+        console.log(`  ${dateStr} (dow=${dow}): weekday=${isWeekday}, holiday=${isHoliday}, counts=${isWeekday && !isHoliday}`);
+        if (isWeekday && !isHoliday) count++;
       }
+      console.log("Working days in period:", count);
       return count;
     })();
 
