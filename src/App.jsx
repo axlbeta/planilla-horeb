@@ -247,20 +247,21 @@ function calcOvertime(entries) {
     if (dow === 0) { ot[1.0] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; }
     // Saturday = 25%
     if (dow === 6) { ot[0.25] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; }
-    regularDays++; totalEffective += hrs; if (hrs <= scheduled + GRACE) return;
-    const extra = hrs - scheduled;
+    regularDays++; totalEffective += hrs;
+    // Overtime by ACTUAL EXIT TIME
+    const scheduledExit = dow === 5 ? 17 : 18;
     const cH = new Date(day.checkOut).getHours() + new Date(day.checkOut).getMinutes() / 60;
-    // 6pm-7pm (18-19) = 25%, 7:01pm-9pm (19-21) = 50%, 9pm-5am (21-5) = 75%
-    if (cH <= 19) { ot[0.25] += extra; }
+    const graceExit = scheduledExit + 10/60;
+    if (cH <= graceExit) return;
+    const otHours = cH - scheduledExit;
+    if (cH <= 19) { ot[0.25] += otHours; }
     else if (cH <= 21) {
-      const hrs25 = Math.max(0, Math.min(extra, 1)); // up to 1hr at 25% (6-7pm)
-      ot[0.25] += hrs25;
-      ot[0.5] += extra - hrs25;
+      ot[0.25] += 1;
+      ot[0.5] += cH - 19;
     } else {
-      const hrs25 = Math.max(0, Math.min(extra, 1)); // 6-7pm
-      const hrs50 = Math.max(0, Math.min(extra - hrs25, 2)); // 7-9pm
-      const hrs75 = Math.max(0, extra - hrs25 - hrs50); // 9pm+
-      ot[0.25] += hrs25; ot[0.5] += hrs50; ot[0.75] += hrs75;
+      ot[0.25] += 1;
+      ot[0.5] += 2;
+      ot[0.75] += cH - 21;
     }
   });
   results[empId] = { totalEffective, regularDays, ot }; }); return results;
@@ -1007,25 +1008,30 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
           return;
         }
 
-        const scheduled = getScheduledHours(dow);
-        const GRACE = 10/60; // 10 min grace period
-        // Grace only determines IF there is overtime
-        // If hours <= scheduled + grace → no overtime at all
-        // If hours > scheduled + grace → calculate OT from scheduled (not scheduled+grace)
-        if (hrs <= scheduled + GRACE) return;
-        const extra = hrs - scheduled;
-        const cH = new Date(entry.checkOut).getHours() + new Date(entry.checkOut).getMinutes() / 60;
-        // 6pm-7pm (18-19) = 25%, 7:01pm-9pm (19-21) = 50%, 9pm-5am (21-5) = 75%
-        if (cH <= 19) { ot[0.25] += extra; }
-        else if (cH <= 21) {
-          const hrs25 = Math.max(0, Math.min(extra, 1));
-          ot[0.25] += hrs25;
-          ot[0.5] += extra - hrs25;
+        // Overtime calculated by ACTUAL EXIT TIME, not total hours
+        // Scheduled exit: L-J = 18:00 (6pm), Viernes = 17:00 (5pm)
+        const scheduledExit = dow === 5 ? 17 : 18; // hour in 24h format
+        const cout = new Date(entry.checkOut);
+        const exitHour = cout.getHours() + cout.getMinutes() / 60;
+
+        // Grace: 10 min after scheduled exit = no OT
+        const graceExit = scheduledExit + 10/60;
+        if (exitHour <= graceExit) return; // No overtime
+
+        // OT starts from scheduled exit (not scheduled exit + grace)
+        const otMinutes = (exitHour - scheduledExit) * 60;
+        const otHours = otMinutes / 60;
+
+        // 6pm-7pm (18-19) = 25%, 7:01pm-9pm (19-21) = 50%, 9pm+ = 75%
+        if (exitHour <= 19) {
+          ot[0.25] += otHours;
+        } else if (exitHour <= 21) {
+          ot[0.25] += 1; // full hour 6-7pm
+          ot[0.5] += exitHour - 19; // from 7pm to exit
         } else {
-          const hrs25 = Math.max(0, Math.min(extra, 1));
-          const hrs50 = Math.max(0, Math.min(extra - hrs25, 2));
-          const hrs75 = Math.max(0, extra - hrs25 - hrs50);
-          ot[0.25] += hrs25; ot[0.5] += hrs50; ot[0.75] += hrs75;
+          ot[0.25] += 1; // 6-7pm
+          ot[0.5] += 2; // 7-9pm
+          ot[0.75] += exitHour - 21; // 9pm+
         }
       });
 
