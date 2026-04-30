@@ -847,10 +847,6 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
     const holidayDates = new Set(holidays.filter(h => h.date >= fs && h.date <= ts).map(h => h.date));
     const holidayNames = {};
     holidays.forEach(h => { if (h.date >= fs && h.date <= ts) holidayNames[h.date] = h.name; });
-    console.log("holidaysOnWeekdays:", holidaysOnWeekdays, "workingDaysInPeriod:", workingDaysInPeriod);
-    console.log("All holidays:", holidays.map(h => h.date + " " + h.name));
-    console.log("Holidays in period:", [...holidayDates]);
-
     // Count working days in period (Mon-Fri, excluding first Friday)
     // NOTE: Holidays ARE counted as working days (they are paid and count as "worked")
     // The employee only needs clock entries for non-holiday weekdays
