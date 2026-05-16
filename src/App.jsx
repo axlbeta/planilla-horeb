@@ -1,92 +1,116 @@
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "./supabaseClient";
 import * as XLSX from "xlsx";
 
-const LOGO = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAA8ADwDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDwEksfagEqcZzQQVPFKATyeK/bj4gGNNHWjvTj0oAXApoGDQuQe9ONACE0daDg0ox7UCEFLTAcV63+y74U0Hxn431TRfENlHdWraPM6bmKmJw8YDqw6MMnmufFYmOGoyqy2RrSpOpNQXU8k5JpV64xX1vrXwf8Px+H/CyofC0FhYaNNc65rS2nnrOqCLEibSNxPzncTwM9TisNvhJp0XiG+ubmXwpD4Sh0pdYh1MafIWaFydqlDJxgLknuCOMnA8mHEGGkr69fzt977bnW8vqI+ZhleO1IQcFm6175e/s9Pp/htNTuvEtqNZW1S/k094gsBQnJiWQtkuAD2wenvWn8b/gp4Xhm8Tap4K1mK2vNItY9Qu9C8o7YYWUksjk8Z2swXkduOK3WeYOU1BSvfrZ26L8b77eZH1GsottbHzfwMUjcGl/DNBBJ6V65xgB3rqfhv441nwDrVxq+hpaPcT2rWri5iLrsYgnABHPyiuYHPSk6jioqUoVYOE1dMcZOL5luei6B8ZvHmjT6Q1lqFsttpWn/ANnwWbW4MDw8Z3rnLMdq/NkdOMDOXaz8aPG+qnX11GawnTXLFbCZPs5CwQLvwsQDfL99iSc5/CvNwCDQQetc39n4Xm5vZq/p53/M1+sVduZnbeJviZ4l8S+D7Xw1raaZexWqxrFeSWam8VU+6vm9eOmcZOTnqa0vEHxq8f674ObwvqGp27WksSw3E6W4W4uIx0V37j1wAT36mvOM5HvRn1qvqOG09xaO602YvrFXX3nqLSUAinAGuoxFA4xTR0pVOVpq0ALQelFIehoAQnBpTyPegcgUD74FAx6qAPejI9aD0puaCdz/2Q==";
+const LOGO = "/logo.jpg";
 
-// ─── Supabase DB ───
+// ─── LocalStorage DB ───
+const LS = {
+  get(key, fb) { try { const v = localStorage.getItem(`horeb_${key}`); return v ? JSON.parse(v) : fb; } catch { return fb; } },
+  set(key, data) { try { localStorage.setItem(`horeb_${key}`, JSON.stringify(data)); } catch(e) { console.error("Storage full:", e); } },
+  remove(key) { localStorage.removeItem(`horeb_${key}`); },
+};
+
+const DEFAULT_EMPLOYEES = [
+  { id:"1", name:"Marcos Alexander Sabillon", position:"Prensista", salary:22000, empType:"weekly" },
+  { id:"2", name:"Cristofer Daniel Lainez", position:"Prensista", salary:22000, empType:"weekly" },
+  { id:"3", name:"Jesus Antonio Chavarria Mendez", position:"Prensista", salary:12937.93, empType:"weekly" },
+  { id:"4", name:"Williams Ricardo Zelaya", position:"Prensista", salary:13715, empType:"weekly" },
+  { id:"5", name:"Jossely Paola Perez Munguia", position:"Diseñadora", salary:15000, empType:"weekly" },
+  { id:"6", name:"Lisbeth Susana Williams", position:"Encuadernadora", salary:12937.93, empType:"weekly" },
+  { id:"7", name:"Roger Edgardo Cardona", position:"Prensista", salary:15000, empType:"weekly" },
+  { id:"11", name:"Luis Felipe Enamorado Williams", position:"Encuadernador", salary:12937.93, empType:"weekly" },
+  { id:"12", name:"Luis Eduardo Williams Duarte", position:"Encuadernador", salary:12937.93, empType:"weekly" },
+  { id:"17", name:"Jeison", position:"Ayudante Encuadernación", salary:12937.93, empType:"weekly" },
+  { id:"21", name:"Jessica Carolina Sierra Rivera", position:"Encuadernador", salary:12937.93, empType:"weekly_nonclock" },
+];
+
+const DEFAULT_HOLIDAYS = [
+  { id:1, date:"2026-01-01", name:"Año Nuevo" },
+  { id:2, date:"2026-04-02", name:"Jueves Santo" },
+  { id:3, date:"2026-04-03", name:"Viernes Santo" },
+  { id:4, date:"2026-04-04", name:"Sábado de Gloria" },
+  { id:5, date:"2026-04-14", name:"Día de las Américas" },
+  { id:6, date:"2026-05-01", name:"Día del Trabajo" },
+  { id:7, date:"2026-09-15", name:"Día de la Independencia" },
+  { id:8, date:"2026-10-03", name:"Día de Morazán" },
+  { id:9, date:"2026-10-12", name:"Día de la Raza" },
+  { id:10, date:"2026-10-21", name:"Día de las Fuerzas Armadas" },
+  { id:11, date:"2026-12-25", name:"Navidad" },
+];
+
 const db = {
-  async getEmployees() {
-    const { data, error } = await supabase.from("employees").select("*").eq("active", true).order("id");
-    if (error) { console.error("getEmployees:", error); return []; }
-    return data.map(e => ({ id: String(e.id), name: e.name, position: e.position, salary: parseFloat(e.salary), empType: e.emp_type || "weekly" }));
+  getEmployees() { return LS.get("employees", DEFAULT_EMPLOYEES).filter(e => e.active !== false); },
+  upsertEmployee(emp) {
+    const all = LS.get("employees", DEFAULT_EMPLOYEES);
+    const idx = all.findIndex(e => e.id === emp.id);
+    if (idx >= 0) all[idx] = { ...all[idx], ...emp, active: true };
+    else all.push({ ...emp, active: true });
+    LS.set("employees", all);
   },
-  async upsertEmployee(emp) {
-    const { error } = await supabase.from("employees").upsert({ id: emp.id, name: emp.name, position: emp.position, salary: emp.salary, active: true, updated_at: new Date().toISOString() });
-    if (error) console.error("upsertEmployee:", error);
+  deleteEmployee(id) {
+    const all = LS.get("employees", DEFAULT_EMPLOYEES);
+    LS.set("employees", all.map(e => e.id === id ? { ...e, active: false } : e));
   },
-  async deleteEmployee(id) {
-    const { error } = await supabase.from("employees").update({ active: false }).eq("id", id);
-    if (error) console.error("deleteEmployee:", error);
+  getClockEntries() { return LS.get("clock", []); },
+  insertClockEntries(entries) {
+    const all = LS.get("clock", []);
+    const ids = new Set(all.map(e => e.id));
+    const nw = entries.filter(e => !ids.has(e.id));
+    LS.set("clock", [...all, ...nw]);
+    return nw.length;
   },
-  async getClockEntries() {
-    const { data, error } = await supabase.from("clock_entries").select("*").order("date", { ascending: false });
-    if (error) { console.error("getClockEntries:", error); return []; }
-    return data.map(e => ({ id: e.id, employeeId: String(e.employee_id), date: String(e.date).slice(0, 10), checkIn: e.check_in, lunchOut: e.lunch_out, lunchIn: e.lunch_in, checkOut: e.check_out, punches: e.punches, name: "" }));
+  updateClockEntry(entry) {
+    LS.set("clock", LS.get("clock", []).map(e => e.id === entry.id ? { ...e, ...entry } : e));
   },
-  async insertClockEntries(entries) {
-    const rows = entries.map(e => ({ id: e.id, employee_id: e.employeeId, date: e.date, check_in: e.checkIn, lunch_out: e.lunchOut, lunch_in: e.lunchIn, check_out: e.checkOut, punches: e.punches }));
-    const { error } = await supabase.from("clock_entries").upsert(rows, { onConflict: "id" });
-    if (error) console.error("insertClockEntries:", error);
+  deleteClockEntry(id) { LS.set("clock", LS.get("clock", []).filter(e => e.id !== id)); },
+  deleteAllClockEntries() { LS.set("clock", []); },
+  getHolidays() { return LS.get("holidays", DEFAULT_HOLIDAYS); },
+  addHoliday(h) { const all = LS.get("holidays", DEFAULT_HOLIDAYS); all.push({ ...h, id: Date.now() }); LS.set("holidays", all); },
+  deleteHoliday(id) { LS.set("holidays", LS.get("holidays", DEFAULT_HOLIDAYS).filter(h => h.id !== id)); },
+  getPayrolls() { return LS.get("payrolls", []); },
+  savePayroll(payroll) {
+    const all = LS.get("payrolls", []);
+    const idx = all.findIndex(p => p.period === payroll.period);
+    if (idx >= 0) all[idx] = payroll; else all.unshift(payroll);
+    LS.set("payrolls", all);
   },
-  async updateClockEntry(entry) {
-    const { error } = await supabase.from("clock_entries").update({
-      check_in: entry.checkIn, lunch_out: entry.lunchOut, lunch_in: entry.lunchIn, check_out: entry.checkOut
-    }).eq("id", entry.id);
-    if (error) {
-      console.error("updateClockEntry:", error);
-      // Fallback: delete and re-insert
-      await supabase.from("clock_entries").delete().eq("id", entry.id);
-      const { error: e2 } = await supabase.from("clock_entries").insert({
-        id: entry.id, employee_id: entry.employeeId, date: entry.date,
-        check_in: entry.checkIn, lunch_out: entry.lunchOut, lunch_in: entry.lunchIn, check_out: entry.checkOut,
-        punches: 4
-      });
-      if (e2) console.error("updateClockEntry fallback:", e2);
-    }
+  deletePayroll(period) { LS.set("payrolls", LS.get("payrolls", []).filter(p => p.period !== period)); },
+  savePayrollBiweekly(payroll) {
+    const all = LS.get("payrolls_bw", []);
+    const idx = all.findIndex(p => p.period === payroll.period);
+    if (idx >= 0) all[idx] = payroll; else all.unshift(payroll);
+    LS.set("payrolls_bw", all);
   },
-  async deleteClockEntry(id) { await supabase.from("clock_entries").delete().eq("id", id); },
-  async deleteAllClockEntries() { await supabase.from("clock_entries").delete().neq("id", ""); },
-
-  // Holidays
-  async getHolidays() {
-    const { data, error } = await supabase.from("holidays").select("*").order("date");
-    if (error) { console.error("getHolidays:", error); return []; }
-    return data.map(h => ({ id: h.id, date: String(h.date).slice(0, 10), name: h.name }));
+  getUsers() { return LS.get("users", []); },
+  addUser(email, pw) {
+    const users = LS.get("users", []);
+    if (users.find(u => u.email === email)) return { error: "Correo ya registrado." };
+    users.push({ email, password: btoa(pw) });
+    LS.set("users", users);
+    return { ok: true };
   },
-  async addHoliday(holiday) {
-    const { error } = await supabase.from("holidays").insert({ date: holiday.date, name: holiday.name });
-    if (error) console.error("addHoliday:", error);
+  loginUser(email, pw) {
+    const u = LS.get("users", []).find(u => u.email === email && u.password === btoa(pw));
+    return u ? { ok: true, email: u.email } : { error: "Correo o contraseña incorrectos." };
   },
-  async deleteHoliday(id) {
-    await supabase.from("holidays").delete().eq("id", id);
+  getSession() { return LS.get("session", null); },
+  setSession(email) { LS.set("session", { email }); },
+  clearSession() { LS.remove("session"); },
+  exportAll() {
+    return JSON.stringify({ employees: LS.get("employees", DEFAULT_EMPLOYEES), clock: LS.get("clock", []), holidays: LS.get("holidays", DEFAULT_HOLIDAYS), payrolls: LS.get("payrolls", []), payrolls_bw: LS.get("payrolls_bw", []), users: LS.get("users", []), exportedAt: new Date().toISOString() }, null, 2);
   },
-  async getPayrolls() {
-    const { data, error } = await supabase.from("payrolls").select("*").order("id", { ascending: false });
-    if (error) { console.error("getPayrolls:", error); return []; }
-    return data;
+  importAll(json) {
+    try {
+      const d = JSON.parse(json);
+      if (d.employees) LS.set("employees", d.employees);
+      if (d.clock) LS.set("clock", d.clock);
+      if (d.holidays) LS.set("holidays", d.holidays);
+      if (d.payrolls) LS.set("payrolls", d.payrolls);
+      if (d.payrolls_bw) LS.set("payrolls_bw", d.payrolls_bw);
+      if (d.users) LS.set("users", d.users);
+      return { ok: true };
+    } catch { return { error: "Archivo inválido." }; }
   },
-  async getPayrollRows(payrollId) {
-    const { data, error } = await supabase.from("payroll_rows").select("*").eq("payroll_id", payrollId);
-    if (error) return [];
-    return data.map(r => ({ employeeId: r.employee_id, name: r.name, position: r.position, salary: +r.salary, daily: +r.daily, hourly: +r.hourly, days: r.days, effectiveHrs: +r.effective_hrs, baseSalary: +r.base_salary, ot: { 0.25: +r.ot_25, 0.5: +r.ot_50, 0.75: +r.ot_75, 1.0: +r.ot_100 }, otPay: +r.ot_pay, fuel: +r.fuel, vacation: +r.vacation, incapacity: +r.incapacity, advance: +r.advance, dec4: +r.dec4, dec3: +r.dec3, otherDed: +r.other_ded, totalEarned: +r.total_earned, totalDeductions: +r.total_deductions, netPay: +r.net_pay }));
-  },
-  async savePayroll(payroll) {
-    const { data: existing } = await supabase.from("payrolls").select("id").eq("period", payroll.period).maybeSingle();
-    let payrollId;
-    if (existing) {
-      payrollId = existing.id;
-      await supabase.from("payroll_rows").delete().eq("payroll_id", payrollId);
-      await supabase.from("payrolls").update({ week_num: payroll.weekNum, date_from: payroll.from, date_to: payroll.to, total_earned: payroll.rows.reduce((s, r) => s + r.totalEarned, 0), total_deductions: payroll.rows.reduce((s, r) => s + r.totalDeductions, 0), total_net: payroll.rows.reduce((s, r) => s + r.netPay, 0) }).eq("id", payrollId);
-    } else {
-      const { data, error } = await supabase.from("payrolls").insert({ period: payroll.period, week_num: payroll.weekNum, date_from: payroll.from, date_to: payroll.to, total_earned: payroll.rows.reduce((s, r) => s + r.totalEarned, 0), total_deductions: payroll.rows.reduce((s, r) => s + r.totalDeductions, 0), total_net: payroll.rows.reduce((s, r) => s + r.netPay, 0) }).select("id").single();
-      if (error) { console.error("savePayroll:", error); return; }
-      payrollId = data.id;
-    }
-    const rows = payroll.rows.map(r => ({ payroll_id: payrollId, employee_id: r.employeeId, name: r.name, position: r.position, salary: r.salary, daily: r.daily, hourly: r.hourly, days: r.days, effective_hrs: r.effectiveHrs, base_salary: r.baseSalary, ot_25: r.ot[0.25], ot_50: r.ot[0.5], ot_75: r.ot[0.75], ot_100: r.ot[1.0], ot_pay: r.otPay, fuel: r.fuel, vacation: r.vacation, incapacity: r.incapacity, advance: r.advance, dec4: r.dec4, dec3: r.dec3, other_ded: r.otherDed, total_earned: r.totalEarned, total_deductions: r.totalDeductions, net_pay: r.netPay }));
-    await supabase.from("payroll_rows").insert(rows);
-  },
-  async deletePayroll(id) { await supabase.from("payroll_rows").delete().eq("payroll_id", id); await supabase.from("payrolls").delete().eq("id", id); },
 };
 
 // ─── Helpers ───
@@ -154,43 +178,45 @@ function fmtTime(t) { return t ? new Date(t).toLocaleTimeString("es-HN", { hour:
 function fmtDate(d) { return new Date(d).toLocaleDateString("es-HN", { weekday: "short", day: "2-digit", month: "short" }); }
 
 function parseClockCSV(csvText) {
-  // Normalize: replace semicolons with commas, handle CRLF
+  // Normalize: handle CRLF
   const text = csvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = text.trim().split("\n");
   if (lines.length < 2) return [];
   
   // Detect separator (semicolon or comma) from header
   const sep = lines[0].includes(";") ? ";" : ",";
+  const headerCols = lines[0].split(sep).length;
   
   const records = [];
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(sep);
-    if (cols.length < 10) continue;
-    const time = cols[0].trim(), userId = cols[1].trim(), evento = cols[9].trim();
-    if (!userId || evento === "Acceso denegado" || evento === "Dispositivo inicializado") continue;
+    if (cols.length < 2) continue;
     
-    // Try multiple date formats:
-    // Format 1: MM/DD/YYYY HH:MM:SS (original)
-    // Format 2: D/M/YYYY HH:MM (no leading zeros, no seconds)
-    // Format 3: DD/MM/YYYY HH:MM:SS
+    const time = cols[0].trim();
+    const userId = cols[1].trim();
+    
+    // Skip empty user IDs
+    if (!userId) continue;
+    
+    // For 10+ column format, check "Evento" column for access denied
+    if (cols.length >= 10) {
+      const evento = cols[9].trim();
+      if (evento === "Acceso denegado" || evento === "Dispositivo inicializado") continue;
+    }
+    
+    // Parse date: supports D/M/YYYY HH:MM, DD/MM/YYYY HH:MM:SS, etc.
     let dt = null, dateStr = null;
-    
-    // Try: DD/M/YYYY HH:MM or D/M/YYYY HH:MM (no seconds)
     let m = time.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
     if (m) {
       const [, p1, p2, yyyy, hh, mi, ss] = m;
       const sec = ss || "00";
-      // Determine if DD/MM or MM/DD
-      // If p1 > 12, it must be DD/MM
-      // If p2 > 12, it must be MM/DD  
-      // If both <= 12, check context (Honduras uses DD/MM)
       let dd, mm;
       if (parseInt(p1) > 12) { dd = p1; mm = p2; }
       else if (parseInt(p2) > 12) { mm = p1; dd = p2; }
-      else { dd = p1; mm = p2; } // Default: DD/MM for Honduras
+      else { dd = p1; mm = p2; }
       
-      dd = dd.padStart(2, "0");
-      mm = mm.padStart(2, "0");
+      dd = String(dd).padStart(2, "0");
+      mm = String(mm).padStart(2, "0");
       dt = new Date(+yyyy, +mm - 1, +dd, +hh, +mi, +sec);
       dateStr = `${yyyy}-${mm}-${dd}`;
     }
@@ -329,21 +355,17 @@ export default function App() {
 
   // Check auth state on mount
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const session = db.getSession(); setUser(session); setAuthLoading(false);
       setUser(session?.user || null);
       setAuthLoading(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null);
-    });
-    return () => subscription.unsubscribe();
   }, []);
 
-  const refresh = useCallback(async () => { const [e, c, p, h] = await Promise.all([db.getEmployees(), db.getClockEntries(), db.getPayrolls(), db.getHolidays()]); setEmployees(e); setClockEntries(c); setPayrolls(p); setHolidays(h); }, []);
+  const refresh = useCallback(() => { setEmployees(db.getEmployees()); setClockEntries(db.getClockEntries()); setPayrolls(db.getPayrolls()); setHolidays(db.getHolidays()); }, []);
 
-  useEffect(() => { if (user) { setLoading(true); refresh().then(() => setLoading(false)); } }, [user, refresh]);
+  useEffect(() => { if (user) { refresh(); setLoading(false); } }, [user, refresh]);
 
-  const handleLogout = async () => { await supabase.auth.signOut(); setUser(null); };
+  const handleLogout = () => { db.clearSession(); setUser(null); };
 
   // Global styles
   const globalStyles = `
@@ -421,7 +443,11 @@ export default function App() {
 
       <footer style={S.footer}>
         <span>Impresos Horeb © {new Date().getFullYear()}</span>
-        <span style={{ color: "#94a3b8" }}>Sistema de Planilla v3.0</span>
+        <span style={{ color: "#94a3b8" }}>Sistema de Planilla v4.0 — Base de datos local</span>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>{const d=db.exportAll();const b=new Blob([d],{type:"application/json"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`horeb_backup_${new Date().toISOString().slice(0,10)}.json`;a.click()}} style={{background:"none",border:"1px solid #d0daea",borderRadius:6,padding:"4px 10px",fontSize:11,color:"#475569",cursor:"pointer",fontFamily:"inherit"}}>📥 Exportar Respaldo</button>
+          <label style={{background:"none",border:"1px solid #d0daea",borderRadius:6,padding:"4px 10px",fontSize:11,color:"#475569",cursor:"pointer",fontFamily:"inherit"}}>📤 Importar Respaldo<input type="file" accept=".json" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{const res=db.importAll(ev.target.result);if(res.ok){refresh();alert("✅ Respaldo restaurado.")}else alert("❌ "+res.error)};r.readAsText(f);e.target.value=""}}/></label>
+        </div>
       </footer>
     </div>
   );
@@ -435,24 +461,24 @@ function LoginScreen({ onLogin, globalStyles }) {
   const [loading, setLoading] = useState(false);
   const [isRegister, setIsRegister] = useState(false);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     if (!email || !password) return setError("Ingresa correo y contraseña.");
     setLoading(true);
     setError("");
 
     if (isRegister) {
-      const { data, error: err } = await supabase.auth.signUp({ email, password });
-      if (err) { setError(err.message); setLoading(false); return; }
-      if (data.user) {
+      const result = db.addUser(email, password);
+      if (result.error) { setError(result.error); setLoading(false); return; }
+      if (result.ok) {
         setError("");
         setIsRegister(false);
         alert("✅ Cuenta creada. Ahora inicia sesión.");
       }
     } else {
-      const { data, error: err } = await supabase.auth.signInWithPassword({ email, password });
-      if (err) { setError(err.message === "Invalid login credentials" ? "Correo o contraseña incorrectos." : err.message); setLoading(false); return; }
-      if (data.user) onLogin(data.user);
+      const result = db.loginUser(email, password);
+      if (result.error) { setError(result.error); setLoading(false); return; }
+      if (result.ok) { db.setSession(email); onLogin({ email }); }
     }
     setLoading(false);
   };
@@ -546,15 +572,15 @@ function DashboardTab({ employees, payrolls, holidays, refresh }) {
   const last = payrolls.length > 0 ? payrolls[0] : null;
   const [lastRows, setLastRows] = useState(null);
   const [newHoliday, setNewHoliday] = useState({ date: "", name: "" });
-  useEffect(() => { if (last) db.getPayrollRows(last.id).then(setLastRows); }, [last]);
+  useEffect(() => { if (last) setLastRows(last.rows || []); }, [last]);
 
-  const addHoliday = async () => {
+  const addHoliday = () => {
     if (!newHoliday.date || !newHoliday.name) return;
-    await db.addHoliday(newHoliday);
-    await refresh();
+    db.addHoliday(newHoliday);
+    refresh();
     setNewHoliday({ date: "", name: "" });
   };
-  const removeHoliday = async (id) => { await db.deleteHoliday(id); await refresh(); };
+  const removeHoliday = (id) => { db.deleteHoliday(id); refresh(); };
   return (
     <div>
       <div style={S.pageHeader}><h2 style={S.title}>Panel de Control</h2><div style={S.goldLine}/></div>
@@ -629,8 +655,8 @@ function EmployeesTab({ employees, refresh }) {
   const [saving, setSaving] = useState(false);
   const openAdd=()=>{setForm({id:"",name:"",position:"",salary:""});setModal("new")};
   const openEdit=(e)=>{setForm({...e,salary:String(e.salary)});setModal(e.id)};
-  const doSave=async()=>{const emp={...form,salary:parseFloat(form.salary)||0};if(!emp.id||!emp.name)return;setSaving(true);await db.upsertEmployee(emp);await refresh();setSaving(false);setModal(null)};
-  const doDelete=async(id)=>{if(confirm("¿Eliminar este empleado?")) {await db.deleteEmployee(id);await refresh()}};
+  const doSave=()=>{const emp={...form,salary:parseFloat(form.salary)||0};if(!emp.id||!emp.name)return;setSaving(true);db.upsertEmployee(emp);refresh();setSaving(false);setModal(null)};
+  const doDelete=(id)=>{if(confirm("¿Eliminar este empleado?")) {{db.deleteEmployee(id);}refresh()}};
   return (
     <div>
       <div style={S.titleRow}><div style={S.pageHeader}><h2 style={S.title}>Empleados (Semanal)</h2><div style={S.goldLine}/></div><button style={S.btnPrimary} onClick={openAdd}>+ Nuevo Empleado</button></div>
@@ -666,12 +692,20 @@ function ClockTab({ employees, clockEntries, refresh }) {
   const [editSaving,setEditSaving]=useState(false);
 
   const handleFile=(e)=>{const file=e.target.files[0];if(!file)return;setImporting(true);const isXLS=file.name.match(/\.xls[xm]?$/i);
-    if(isXLS){const reader=new FileReader();reader.onload=async(evt)=>{let parsed=parseClockXLS(new Uint8Array(evt.target.result));if(parsed.length===0){const tr=new FileReader();tr.onload=async(e2)=>{let t=e2.target.result;if(t.includes("<table")||t.includes("<html")){const doc=new DOMParser().parseFromString(t,"text/html");const lines=[];doc.querySelectorAll("tr").forEach(r=>{lines.push(Array.from(r.querySelectorAll("td,th")).map(c=>c.textContent.trim()).join(","))});t=lines.join("\n")}await finishImport(parseClockCSV(t))};tr.readAsText(file,"UTF-8");return}await finishImport(parsed)};reader.readAsArrayBuffer(file)}
-    else{const reader=new FileReader();reader.onload=async(evt)=>{let parsed=parseClockCSV(evt.target.result);if(parsed.length===0){const r2=new FileReader();r2.onload=async(e2)=>await finishImport(parseClockCSV(e2.target.result));r2.readAsText(file,"ISO-8859-1");return}await finishImport(parsed)};reader.readAsText(file,"UTF-8")}e.target.value=""};
-  const finishImport=async(parsed)=>{if(parsed.length===0){setImportResult({error:"No se encontraron registros válidos."});setImporting(false);return}const existingIds=new Set(clockEntries.map(c=>c.id));const newE=parsed.filter(p=>!existingIds.has(p.id));if(newE.length>0)await db.insertClockEntries(newE);await refresh();setImportResult({added:newE.length,total:parsed.length,skipped:parsed.length-newE.length});setImporting(false)};
-  const addManual=async()=>{if(!mf.empId)return;const entry={id:`${mf.empId}_${mf.date}_m${Date.now()}`,employeeId:mf.empId,date:mf.date,checkIn:`${mf.date}T${mf.cin}:00`,lunchOut:`${mf.date}T${mf.lout}:00`,lunchIn:`${mf.date}T${mf.lin}:00`,checkOut:`${mf.date}T${mf.cout}:00`,punches:4};await db.insertClockEntries([entry]);await refresh()};
-  const removeEntry=async(id)=>{await db.deleteClockEntry(id);await refresh()};
-  const clearAll=async()=>{if(confirm("¿Borrar TODAS las marcaciones?")) {await db.deleteAllClockEntries();await refresh()}};
+    if(isXLS){const reader=new FileReader();reader.onload=(evt)=>{let parsed=parseClockXLS(new Uint8Array(evt.target.result));if(parsed.length===0){const tr=new FileReader();tr.onload=(e2)=>{let t=e2.target.result;if(t.includes("<table")||t.includes("<html")){const doc=new DOMParser().parseFromString(t,"text/html");const lines=[];doc.querySelectorAll("tr").forEach(r=>{lines.push(Array.from(r.querySelectorAll("td,th")).map(c=>c.textContent.trim()).join(","))});t=lines.join("\n")}finishImport(parseClockCSV(t))};tr.readAsText(file,"UTF-8");return}finishImport(parsed)};reader.readAsArrayBuffer(file)}
+    else{const reader=new FileReader();reader.onload=(evt)=>{let parsed=parseClockCSV(evt.target.result);if(parsed.length===0){const r2=new FileReader();r2.onload=(e2)=>finishImport(parseClockCSV(e2.target.result));r2.readAsText(file,"ISO-8859-1");return}finishImport(parsed)};reader.readAsText(file,"UTF-8")}e.target.value=""};
+  const finishImport=(parsed)=>{if(parsed.length===0){setImportResult({error:"No se encontraron registros válidos."});setImporting(false);return}
+    db.insertClockEntries(parsed);
+    // Re-read from localStorage to get merged data
+    const updated = db.getClockEntries();
+    const added = parsed.length;
+    setClockEntries(updated);
+    setImportResult({added, total:parsed.length, skipped:0});
+    setImporting(false);
+  };
+  const addManual=()=>{if(!mf.empId)return;const entry={id:`${mf.empId}_${mf.date}_m${Date.now()}`,employeeId:mf.empId,date:mf.date,checkIn:`${mf.date}T${mf.cin}:00`,lunchOut:`${mf.date}T${mf.lout}:00`,lunchIn:`${mf.date}T${mf.lin}:00`,checkOut:`${mf.date}T${mf.cout}:00`,punches:4};db.insertClockEntries([entry]);refresh()};
+  const removeEntry=(id)=>{db.deleteClockEntry(id);refresh()};
+  const clearAll=()=>{if(confirm("¿Borrar TODAS las marcaciones?")) {db.deleteAllClockEntries();refresh()}};
 
   // ─── Edit functions ───
   const extractTime = (isoStr) => {
@@ -688,7 +722,7 @@ function ClockTab({ employees, clockEntries, refresh }) {
       checkOut: extractTime(entry.checkOut),
     });
   };
-  const saveEdit = async () => {
+  const saveEdit = () => {
     if (!editEntry) return;
     setEditSaving(true);
     const d = editEntry.date;
@@ -702,8 +736,8 @@ function ClockTab({ employees, clockEntries, refresh }) {
       lunchIn: toISO(editForm.lunchIn),
       checkOut: toISO(editForm.checkOut),
     };
-    await db.updateClockEntry(updated);
-    await refresh();
+    db.updateClockEntry(updated);
+    refresh();
     setEditSaving(false);
     setEditEntry(null);
   };
@@ -1072,7 +1106,7 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
     setResult({ period: `WK${weekNum||"?"} ${from} al ${to}`, rows, from, to, weekNum, workingDaysInPeriod, holidaysInPeriod: holidayDates.size, holidayNames: Object.entries(holidayNames).map(([d,n])=>`${n} (${d})`), applyIHSS, applyRAP, fridayAutoFills });
   };
 
-  const doSave=async()=>{if(!result)return;setSaving(true);await db.savePayroll(result);await refresh();setSaving(false);alert("✅ Planilla guardada.")};
+  const doSave=()=>{if(!result)return;setSaving(true);db.savePayroll(result);refresh();setSaving(false);alert("✅ Planilla guardada.")};
   const updAdj=(eId,f,v)=>setAdj(p=>({...p,[eId]:{...(p[eId]||{}),[f]:v}}));
   return (
     <div>
@@ -1179,8 +1213,8 @@ function PayrollTab({ employees, clockEntries, refresh, holidays }) {
 // ═══ HISTORY ═══
 function HistoryTab({ payrolls, refresh }) {
   const [sel,setSel]=useState(null);const [rows,setRows]=useState(null);const [loadingRows,setLoadingRows]=useState(false);
-  const selectPayroll=async i=>{setSel(i);setLoadingRows(true);setRows(await db.getPayrollRows(payrolls[i].id));setLoadingRows(false)};
-  const del=async i=>{if(!confirm("¿Eliminar esta planilla del historial?"))return;await db.deletePayroll(payrolls[i].id);await refresh();setSel(null);setRows(null)};
+  const selectPayroll= i=>{setSel(i);setLoadingRows(true);setRows(payrolls[i].rows || []);setLoadingRows(false)};
+  const del= i=>{if(!confirm("¿Eliminar esta planilla del historial?"))return;db.deletePayroll(payrolls[i].period);refresh();setSel(null);setRows(null)};
   return (
     <div>
       <div style={S.pageHeader}><h2 style={S.title}>Historial de Planillas</h2><div style={S.goldLine}/></div>
@@ -1231,16 +1265,16 @@ function ConfidentialTab({ employees, refresh }) {
 
   const openAdd=()=>{setForm({id:"",name:"",position:"",salary:""});setModal("new")};
   const openEdit=(e)=>{setForm({...e,salary:String(e.salary)});setModal(e.id)};
-  const doSave=async()=>{
+  const doSave=()=>{
     const emp={...form,salary:parseFloat(form.salary)||0};
     if(!emp.id||!emp.name)return;
     setSaving(true);
-    await supabase.from("employees").upsert({id:emp.id,name:emp.name,position:emp.position,salary:emp.salary,active:true,emp_type:"biweekly",updated_at:new Date().toISOString()});
-    await refresh();
+    db.upsertEmployee({...emp, empType:"biweekly"});
+    refresh();
     setSaving(false);
     setModal(null);
   };
-  const doDelete=async(id)=>{if(confirm("¿Eliminar?")) {await supabase.from("employees").update({active:false}).eq("id",id);await refresh()}};
+  const doDelete=(id)=>{if(confirm("¿Eliminar?")) {{db.deleteEmployee(id);}refresh()}};
 
   const generate = () => {
     if (!from || !to) return alert("Selecciona las fechas de la quincena.");
@@ -1262,20 +1296,11 @@ function ConfidentialTab({ employees, refresh }) {
     setResult({ period: `Q ${from} al ${to}`, rows, from, to });
   };
 
-  const doSavePayroll = async () => {
+  const doSavePayroll = () => {
     if (!result) return;
     setPaySaving(true);
-    const { data: existing } = await supabase.from("payrolls_biweekly").select("id").eq("period", result.period).maybeSingle();
-    let pid;
-    if (existing) {
-      pid = existing.id;
-      await supabase.from("payroll_rows_biweekly").delete().eq("payroll_id", pid);
-      await supabase.from("payrolls_biweekly").update({ date_from: result.from, date_to: result.to, total_earned: result.rows.reduce((s,r)=>s+r.totalEarned,0), total_deductions: result.rows.reduce((s,r)=>s+r.totalDeductions,0), total_net: result.rows.reduce((s,r)=>s+r.netPay,0) }).eq("id", pid);
-    } else {
-      const { data } = await supabase.from("payrolls_biweekly").insert({ period: result.period, date_from: result.from, date_to: result.to, total_earned: result.rows.reduce((s,r)=>s+r.totalEarned,0), total_deductions: result.rows.reduce((s,r)=>s+r.totalDeductions,0), total_net: result.rows.reduce((s,r)=>s+r.netPay,0) }).select("id").single();
-      pid = data.id;
-    }
-    await supabase.from("payroll_rows_biweekly").insert(result.rows.map(r=>({ payroll_id:pid, employee_id:r.employeeId, name:r.name, position:r.position, salary:r.salary, base_salary:r.baseSalary, ihss_em:r.ihssEM, ihss_ivm:r.ihssIVM, ihss_total:r.ihssTotal, other_ded:r.otherDed, total_earned:r.totalEarned, total_deductions:r.totalDeductions, net_pay:r.netPay })));
+    db.savePayrollBiweekly(result);
+    refresh();
     setPaySaving(false);
     alert("✅ Planilla quincenal guardada.");
   };
