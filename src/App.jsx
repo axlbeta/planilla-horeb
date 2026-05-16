@@ -344,28 +344,16 @@ const TABS = [
 ];
 
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
   const [tab, setTab] = useState("dash");
   const [employees, setEmployees] = useState([]);
   const [clockEntries, setClockEntries] = useState([]);
   const [payrolls, setPayrolls] = useState([]);
   const [holidays, setHolidays] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  // Check auth state on mount
-  useEffect(() => {
-    const session = db.getSession(); setUser(session); setAuthLoading(false);
-      setUser(session?.user || null);
-      setAuthLoading(false);
-    });
-  }, []);
+  const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(() => { setEmployees(db.getEmployees()); setClockEntries(db.getClockEntries()); setPayrolls(db.getPayrolls()); setHolidays(db.getHolidays()); }, []);
 
-  useEffect(() => { if (user) { refresh(); setLoading(false); } }, [user, refresh]);
-
-  const handleLogout = () => { db.clearSession(); setUser(null); };
+  useEffect(() => { refresh(); setLoading(false); }, [refresh]);
 
   // Global styles
   const globalStyles = `
@@ -385,19 +373,6 @@ export default function App() {
     ::-webkit-scrollbar-thumb{background:#b0bec5;border-radius:3px}
   `;
 
-  // Auth loading
-  if (authLoading) return (
-    <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"linear-gradient(135deg,#0a2351 0%,#163a72 50%,#1a4a8a 100%)" }}>
-      <style>{globalStyles}</style>
-      <img src={LOGO} alt="Horeb" style={{ height: 50, marginBottom: 20, borderRadius: 8 }}/>
-      <div style={{ width:36,height:36,border:"3px solid rgba(255,255,255,0.2)",borderTopColor:"#c9a227",borderRadius:"50%",animation:"spin 0.8s linear infinite" }}/>
-    </div>
-  );
-
-  // Login screen
-  if (!user) return <LoginScreen onLogin={setUser} globalStyles={globalStyles} />;
-
-  // Data loading
   if (loading) return (
     <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"linear-gradient(135deg,#0a2351 0%,#163a72 50%,#1a4a8a 100%)" }}>
       <style>{globalStyles}</style>
@@ -426,14 +401,6 @@ export default function App() {
               {t.icon}<span>{t.label}</span>
             </button>
           ))}
-          <div style={S.brandDivider}/>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:11,color:"rgba(255,255,255,0.4)",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.email}</span>
-            <button onClick={handleLogout} style={{...S.navBtn,color:"#f87171",fontSize:12,padding:"6px 10px"}} title="Cerrar sesión">
-              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-              Salir
-            </button>
-          </div>
         </nav>
       </header>
 
@@ -449,119 +416,6 @@ export default function App() {
           <label style={{background:"none",border:"1px solid #d0daea",borderRadius:6,padding:"4px 10px",fontSize:11,color:"#475569",cursor:"pointer",fontFamily:"inherit"}}>📤 Importar Respaldo<input type="file" accept=".json" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{const res=db.importAll(ev.target.result);if(res.ok){refresh();alert("✅ Respaldo restaurado.")}else alert("❌ "+res.error)};r.readAsText(f);e.target.value=""}}/></label>
         </div>
       </footer>
-    </div>
-  );
-}
-
-// ═══ LOGIN SCREEN ═══
-function LoginScreen({ onLogin, globalStyles }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [isRegister, setIsRegister] = useState(false);
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!email || !password) return setError("Ingresa correo y contraseña.");
-    setLoading(true);
-    setError("");
-
-    if (isRegister) {
-      const result = db.addUser(email, password);
-      if (result.error) { setError(result.error); setLoading(false); return; }
-      if (result.ok) {
-        setError("");
-        setIsRegister(false);
-        alert("✅ Cuenta creada. Ahora inicia sesión.");
-      }
-    } else {
-      const result = db.loginUser(email, password);
-      if (result.error) { setError(result.error); setLoading(false); return; }
-      if (result.ok) { db.setSession(email); onLogin({ email }); }
-    }
-    setLoading(false);
-  };
-
-  return (
-    <div style={{
-      display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",
-      background:"linear-gradient(135deg,#0a2351 0%,#0d2d6b 40%,#1a4a8a 100%)",
-      fontFamily:"'Source Sans 3','Segoe UI',sans-serif",padding:20,
-    }}>
-      <style>{globalStyles}</style>
-      <div style={{
-        background:"#fff",borderRadius:20,padding:0,width:"100%",maxWidth:420,
-        boxShadow:"0 24px 80px rgba(0,0,0,0.4)",overflow:"hidden",animation:"slideUp 0.5s ease",
-      }}>
-        {/* Header */}
-        <div style={{
-          background:"linear-gradient(135deg,#0a2351,#163a72)",padding:"32px 40px 28px",textAlign:"center",
-          borderBottom:"3px solid #c9a227",
-        }}>
-          <img src={LOGO} alt="Horeb" style={{height:45,marginBottom:12,borderRadius:6}}/>
-          <div style={{color:"rgba(255,255,255,0.5)",fontSize:12,letterSpacing:"0.15em",textTransform:"uppercase",fontFamily:"'Cormorant Garamond',serif"}}>
-            Sistema de Planilla
-          </div>
-        </div>
-
-        {/* Form */}
-        <div style={{padding:"32px 40px 36px"}}>
-          <h2 style={{fontSize:20,fontWeight:700,color:"#0a2351",marginBottom:4,fontFamily:"'Cormorant Garamond',serif"}}>
-            {isRegister ? "Crear Cuenta" : "Iniciar Sesión"}
-          </h2>
-          <p style={{fontSize:13,color:"#64748b",marginBottom:24}}>
-            {isRegister ? "Registra un nuevo usuario autorizado." : "Ingresa tus credenciales para acceder."}
-          </p>
-
-          {error && (
-            <div style={{padding:"10px 14px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,marginBottom:16,fontSize:13,color:"#dc2626",fontWeight:500}}>
-              {error}
-            </div>
-          )}
-
-          <div style={{display:"flex",flexDirection:"column",gap:16}}>
-            <div style={{display:"flex",flexDirection:"column",gap:5}}>
-              <label style={{fontSize:11,fontWeight:700,color:"#475569",textTransform:"uppercase",letterSpacing:"0.06em"}}>Correo Electrónico</label>
-              <input
-                type="email" value={email} onChange={e=>setEmail(e.target.value)}
-                placeholder="usuario@empresa.com"
-                style={{padding:"11px 14px",border:"1px solid #d0daea",borderRadius:10,fontSize:14,color:"#1e293b",background:"#f8fafc",width:"100%",fontFamily:"inherit"}}
-              />
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:5}}>
-              <label style={{fontSize:11,fontWeight:700,color:"#475569",textTransform:"uppercase",letterSpacing:"0.06em"}}>Contraseña</label>
-              <input
-                type="password" value={password} onChange={e=>setPassword(e.target.value)}
-                placeholder="••••••••"
-                onKeyDown={e=>e.key==="Enter"&&handleSubmit(e)}
-                style={{padding:"11px 14px",border:"1px solid #d0daea",borderRadius:10,fontSize:14,color:"#1e293b",background:"#f8fafc",width:"100%",fontFamily:"inherit"}}
-              />
-            </div>
-            <button
-              onClick={handleSubmit} disabled={loading}
-              style={{
-                padding:"12px",background:"linear-gradient(135deg,#0a2351,#163a72)",color:"#fff",
-                border:"none",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer",
-                fontFamily:"inherit",letterSpacing:"0.03em",marginTop:4,
-                boxShadow:"0 4px 12px rgba(10,35,81,0.3)",
-                opacity:loading?0.7:1,
-              }}
-            >
-              {loading ? "Procesando..." : isRegister ? "Crear Cuenta" : "Ingresar"}
-            </button>
-          </div>
-
-          <div style={{textAlign:"center",marginTop:20}}>
-            <button
-              onClick={()=>{setIsRegister(!isRegister);setError("")}}
-              style={{background:"none",border:"none",color:"#1a5ab8",fontSize:13,cursor:"pointer",fontFamily:"inherit",fontWeight:500}}
-            >
-              {isRegister ? "← Ya tengo cuenta, iniciar sesión" : "Registrar nuevo usuario →"}
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
