@@ -39,7 +39,17 @@ const DEFAULT_HOLIDAYS = [
 ];
 
 const db = {
-  getEmployees() { return LS.get("employees", DEFAULT_EMPLOYEES).filter(e => e.active !== false); },
+  getEmployees() {
+    const stored = LS.get("employees", DEFAULT_EMPLOYEES);
+    const ids = new Set(stored.map(e => e.id));
+    const missingDefaults = DEFAULT_EMPLOYEES.filter(d => !ids.has(d.id));
+    if (missingDefaults.length) {
+      const merged = [...stored, ...missingDefaults.map(d => ({ ...d, active: true }))];
+      LS.set("employees", merged);
+      return merged.filter(e => e.active !== false);
+    }
+    return stored.filter(e => e.active !== false);
+  },
   upsertEmployee(emp) {
     const all = LS.get("employees", DEFAULT_EMPLOYEES);
     const idx = all.findIndex(e => e.id === emp.id);
@@ -503,13 +513,13 @@ function StatCard({icon,label,value,accent}){return<div style={{...S.card,border
 
 // ═══ EMPLOYEES ═══
 function EmployeesTab({ employees, refresh }) {
-  const weeklyEmployees = employees.filter(e => (e.empType || "weekly") === "weekly");
+  const weeklyEmployees = employees.filter(e => { const t = e.empType || "weekly"; return t === "weekly" || t === "weekly_nonclock"; });
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({ id:"",name:"",position:"",salary:"" });
+  const [form, setForm] = useState({ id:"",name:"",position:"",salary:"",empType:"weekly" });
   const [saving, setSaving] = useState(false);
-  const openAdd=()=>{setForm({id:"",name:"",position:"",salary:""});setModal("new")};
-  const openEdit=(e)=>{setForm({...e,salary:String(e.salary)});setModal(e.id)};
-  const doSave=()=>{const emp={...form,salary:parseFloat(form.salary)||0};if(!emp.id||!emp.name)return;setSaving(true);db.upsertEmployee(emp);refresh();setSaving(false);setModal(null)};
+  const openAdd=()=>{setForm({id:"",name:"",position:"",salary:"",empType:"weekly"});setModal("new")};
+  const openEdit=(e)=>{setForm({...e,salary:String(e.salary),empType:e.empType||"weekly"});setModal(e.id)};
+  const doSave=()=>{const emp={...form,salary:parseFloat(form.salary)||0,empType:form.empType||"weekly"};if(!emp.id||!emp.name)return;setSaving(true);db.upsertEmployee(emp);refresh();setSaving(false);setModal(null)};
   const doDelete=(id)=>{if(confirm("¿Eliminar este empleado?")) {{db.deleteEmployee(id);}refresh()}};
   return (
     <div>
@@ -521,6 +531,7 @@ function EmployeesTab({ employees, refresh }) {
           <Field label="Nombre Completo" value={form.name} onChange={v=>setForm({...form,name:v})} ph="Nombre del empleado"/>
           <Field label="Posición" value={form.position} onChange={v=>setForm({...form,position:v})} ph="Prensista"/>
           <Field label="Salario Mensual (L.)" value={form.salary} onChange={v=>setForm({...form,salary:v})} ph="0.00" type="number"/>
+          <Field label="Tipo" value={form.empType} onChange={v=>setForm({...form,empType:v})} type="select" options={[{v:"weekly",l:"Semanal (marca reloj)"},{v:"weekly_nonclock",l:"Semanal SIN reloj"}]}/>
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24}}>
           <button style={S.btnSec} onClick={()=>setModal(null)}>Cancelar</button>
@@ -530,7 +541,7 @@ function EmployeesTab({ employees, refresh }) {
       <div style={S.card}><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
         {["Cód","Nombre","Posición","Salario Mensual","Salario Diario","Salario/Hora",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3&&i<=5?"right":"left"}}>{h}</th>)}
       </tr></thead><tbody>
-        {weeklyEmployees.map(e=><tr key={e.id}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600,color:"#0a2351"}}>{e.name}</td><td style={S.td}><span style={S.posBadge}>{e.position}</span></td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/30)}</td><td style={S.tdM}>{formatL(e.salary/30/8)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>)}
+        {weeklyEmployees.map(e=><tr key={e.id} style={e.empType==="weekly_nonclock"?{background:"#f0f3f8"}:{}}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600,color:"#0a2351"}}>{e.name} {e.empType==="weekly_nonclock"&&<span style={{fontSize:9,color:"#1d4ed8",background:"#eff6ff",padding:"1px 5px",borderRadius:3,marginLeft:4}}>SIN RELOJ</span>}</td><td style={S.td}><span style={S.posBadge}>{e.position}</span></td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/30)}</td><td style={S.tdM}>{formatL(e.salary/30/8)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>)}
       </tbody></table></div></div>
     </div>
   );
@@ -550,10 +561,8 @@ function ClockTab({ employees, clockEntries, refresh }) {
     else{const reader=new FileReader();reader.onload=(evt)=>{let parsed=parseClockCSV(evt.target.result);if(parsed.length===0){const r2=new FileReader();r2.onload=(e2)=>finishImport(parseClockCSV(e2.target.result));r2.readAsText(file,"ISO-8859-1");return}finishImport(parsed)};reader.readAsText(file,"UTF-8")}e.target.value=""};
   const finishImport=(parsed)=>{if(parsed.length===0){setImportResult({error:"No se encontraron registros válidos."});setImporting(false);return}
     db.insertClockEntries(parsed);
-    // Re-read from localStorage to get merged data
-    const updated = db.getClockEntries();
+    refresh();
     const added = parsed.length;
-    setClockEntries(updated);
     setImportResult({added, total:parsed.length, skipped:0});
     setImporting(false);
   };
