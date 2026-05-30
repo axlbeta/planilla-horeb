@@ -1,1344 +1,490 @@
 import { useState, useEffect, useCallback } from "react";
+import { supabase } from "./supabaseClient";
 import * as XLSX from "xlsx";
 
 const LOGO = "/logo.jpg";
 
-// ─── LocalStorage DB ───
-const LS = {
-  get(key, fb) { try { const v = localStorage.getItem(`horeb_${key}`); return v ? JSON.parse(v) : fb; } catch { return fb; } },
-  set(key, data) { try { localStorage.setItem(`horeb_${key}`, JSON.stringify(data)); } catch(e) { console.error("Storage full:", e); } },
-  remove(key) { localStorage.removeItem(`horeb_${key}`); },
-};
-
-const DEFAULT_EMPLOYEES = [
-  { id:"1", name:"Marcos Alexander Sabillon", position:"Prensista", salary:22000, empType:"weekly" },
-  { id:"2", name:"Cristofer Daniel Lainez", position:"Prensista", salary:22000, empType:"weekly" },
-  { id:"3", name:"Jesus Antonio Chavarria Mendez", position:"Prensista", salary:12937.93, empType:"weekly" },
-  { id:"4", name:"Williams Ricardo Zelaya", position:"Prensista", salary:13715, empType:"weekly" },
-  { id:"5", name:"Jossely Paola Perez Munguia", position:"Diseñadora", salary:15000, empType:"weekly" },
-  { id:"6", name:"Lisbeth Susana Williams", position:"Encuadernadora", salary:12937.93, empType:"weekly" },
-  { id:"7", name:"Roger Edgardo Cardona", position:"Prensista", salary:15000, empType:"weekly" },
-  { id:"11", name:"Luis Felipe Enamorado Williams", position:"Encuadernador", salary:12937.93, empType:"weekly" },
-  { id:"12", name:"Luis Eduardo Williams Duarte", position:"Encuadernador", salary:12937.93, empType:"weekly" },
-  { id:"17", name:"Jeison", position:"Ayudante Encuadernación", salary:12937.93, empType:"weekly" },
-  { id:"21", name:"Jessica Carolina Sierra Rivera", position:"Encuadernador", salary:12937.93, empType:"weekly_nonclock" },
-];
-
-const DEFAULT_HOLIDAYS = [
-  { id:1, date:"2026-01-01", name:"Año Nuevo" },
-  { id:2, date:"2026-04-02", name:"Jueves Santo" },
-  { id:3, date:"2026-04-03", name:"Viernes Santo" },
-  { id:4, date:"2026-04-04", name:"Sábado de Gloria" },
-  { id:5, date:"2026-04-14", name:"Día de las Américas" },
-  { id:6, date:"2026-05-01", name:"Día del Trabajo" },
-  { id:7, date:"2026-09-15", name:"Día de la Independencia" },
-  { id:8, date:"2026-10-03", name:"Día de Morazán" },
-  { id:9, date:"2026-10-12", name:"Día de la Raza" },
-  { id:10, date:"2026-10-21", name:"Día de las Fuerzas Armadas" },
-  { id:11, date:"2026-12-25", name:"Navidad" },
-];
-
+// ═══ SUPABASE DB ═══
 const db = {
-  getEmployees() {
-    const stored = LS.get("employees", DEFAULT_EMPLOYEES);
-    const ids = new Set(stored.map(e => e.id));
-    const missingDefaults = DEFAULT_EMPLOYEES.filter(d => !ids.has(d.id));
-    if (missingDefaults.length) {
-      const merged = [...stored, ...missingDefaults.map(d => ({ ...d, active: true }))];
-      LS.set("employees", merged);
-      return merged.filter(e => e.active !== false);
+  async getEmployees() {
+    const { data } = await supabase.from("employees").select("*").eq("active", true).order("id");
+    return (data || []).map(e => ({ id: String(e.id), name: e.name, position: e.position, salary: parseFloat(e.salary), empType: e.emp_type || "weekly" }));
+  },
+  async upsertEmployee(emp) {
+    await supabase.from("employees").upsert({ id: emp.id, name: emp.name, position: emp.position, salary: emp.salary, active: true, emp_type: emp.empType || "weekly", updated_at: new Date().toISOString() });
+  },
+  async deleteEmployee(id) {
+    await supabase.from("employees").update({ active: false }).eq("id", id);
+  },
+  async getClockEntries() {
+    const { data } = await supabase.from("clock_entries").select("*").order("date", { ascending: false });
+    return (data || []).map(e => ({ id: e.id, employeeId: String(e.employee_id), date: String(e.date).slice(0,10), checkIn: e.check_in, lunchOut: e.lunch_out, lunchIn: e.lunch_in, checkOut: e.check_out, punches: e.punches }));
+  },
+  async insertClockEntries(entries) {
+    const rows = entries.map(e => ({ id: e.id, employee_id: e.employeeId, date: e.date, check_in: e.checkIn, lunch_out: e.lunchOut, lunch_in: e.lunchIn, check_out: e.checkOut, punches: e.punches }));
+    await supabase.from("clock_entries").upsert(rows, { onConflict: "id" });
+  },
+  async updateClockEntry(entry) {
+    const { error } = await supabase.from("clock_entries").update({ check_in: entry.checkIn, lunch_out: entry.lunchOut, lunch_in: entry.lunchIn, check_out: entry.checkOut }).eq("id", entry.id);
+    if (error) {
+      await supabase.from("clock_entries").delete().eq("id", entry.id);
+      await supabase.from("clock_entries").insert({ id: entry.id, employee_id: entry.employeeId, date: entry.date, check_in: entry.checkIn, lunch_out: entry.lunchOut, lunch_in: entry.lunchIn, check_out: entry.checkOut, punches: 4 });
     }
-    return stored.filter(e => e.active !== false);
   },
-  upsertEmployee(emp) {
-    const all = LS.get("employees", DEFAULT_EMPLOYEES);
-    const idx = all.findIndex(e => e.id === emp.id);
-    if (idx >= 0) all[idx] = { ...all[idx], ...emp, active: true };
-    else all.push({ ...emp, active: true });
-    LS.set("employees", all);
+  async deleteClockEntry(id) { await supabase.from("clock_entries").delete().eq("id", id); },
+  async deleteAllClockEntries() { await supabase.from("clock_entries").delete().neq("id", ""); },
+  async getHolidays() {
+    const { data } = await supabase.from("holidays").select("*").order("date");
+    return (data || []).map(h => ({ id: h.id, date: String(h.date).slice(0,10), name: h.name }));
   },
-  deleteEmployee(id) {
-    const all = LS.get("employees", DEFAULT_EMPLOYEES);
-    LS.set("employees", all.map(e => e.id === id ? { ...e, active: false } : e));
+  async addHoliday(h) { await supabase.from("holidays").insert({ date: h.date, name: h.name }); },
+  async deleteHoliday(id) { await supabase.from("holidays").delete().eq("id", id); },
+  async getPayrolls() {
+    const { data } = await supabase.from("payrolls").select("*").order("id", { ascending: false });
+    return data || [];
   },
-  getClockEntries() { return LS.get("clock", []); },
-  insertClockEntries(entries) {
-    const all = LS.get("clock", []);
-    const ids = new Set(all.map(e => e.id));
-    const nw = entries.filter(e => !ids.has(e.id));
-    LS.set("clock", [...all, ...nw]);
-    return nw.length;
+  async getPayrollRows(pid) {
+    const { data } = await supabase.from("payroll_rows").select("*").eq("payroll_id", pid);
+    return (data || []).map(r => ({ employeeId: r.employee_id, name: r.name, position: r.position, salary: +r.salary, daily: +r.daily, hourly: +r.hourly, days: r.days, effectiveHrs: +r.effective_hrs, baseSalary: +r.base_salary, ot: { 0.25: +r.ot_25, 0.5: +r.ot_50, 0.75: +r.ot_75, 1.0: +r.ot_100 }, otPay: +r.ot_pay, ihssTotal: +(r.ihss_total||0), rap: +(r.rap||0), fuel: +r.fuel, vacation: +r.vacation, incapacity: +r.incapacity, advance: +r.advance, dec4: +r.dec4, dec3: +r.dec3, otherDed: +r.other_ded, totalEarned: +r.total_earned, totalDeductions: +r.total_deductions, netPay: +r.net_pay }));
   },
-  updateClockEntry(entry) {
-    LS.set("clock", LS.get("clock", []).map(e => e.id === entry.id ? { ...e, ...entry } : e));
+  async savePayroll(payroll) {
+    const { data: ex } = await supabase.from("payrolls").select("id").eq("period", payroll.period).maybeSingle();
+    let pid;
+    if (ex) {
+      pid = ex.id;
+      await supabase.from("payroll_rows").delete().eq("payroll_id", pid);
+      await supabase.from("payrolls").update({ week_num: payroll.weekNum, date_from: payroll.from, date_to: payroll.to, total_earned: payroll.rows.reduce((s,r) => s+r.totalEarned, 0), total_deductions: payroll.rows.reduce((s,r) => s+r.totalDeductions, 0), total_net: payroll.rows.reduce((s,r) => s+r.netPay, 0) }).eq("id", pid);
+    } else {
+      const { data } = await supabase.from("payrolls").insert({ period: payroll.period, week_num: payroll.weekNum, date_from: payroll.from, date_to: payroll.to, total_earned: payroll.rows.reduce((s,r) => s+r.totalEarned, 0), total_deductions: payroll.rows.reduce((s,r) => s+r.totalDeductions, 0), total_net: payroll.rows.reduce((s,r) => s+r.netPay, 0) }).select("id").single();
+      pid = data.id;
+    }
+    const rows = payroll.rows.map(r => ({ payroll_id: pid, employee_id: r.employeeId, name: r.name, position: r.position, salary: r.salary, daily: r.daily, hourly: r.hourly, days: r.days, effective_hrs: r.effectiveHrs, base_salary: r.baseSalary, ot_25: r.ot[0.25], ot_50: r.ot[0.5], ot_75: r.ot[0.75], ot_100: r.ot[1.0], ot_pay: r.otPay, ihss_total: r.ihssTotal||0, rap: r.rap||0, fuel: r.fuel, vacation: r.vacation, incapacity: r.incapacity, advance: r.advance, dec4: r.dec4, dec3: r.dec3, other_ded: r.otherDed, total_earned: r.totalEarned, total_deductions: r.totalDeductions, net_pay: r.netPay }));
+    await supabase.from("payroll_rows").insert(rows);
   },
-  deleteClockEntry(id) { LS.set("clock", LS.get("clock", []).filter(e => e.id !== id)); },
-  deleteAllClockEntries() { LS.set("clock", []); },
-  getHolidays() { return LS.get("holidays", DEFAULT_HOLIDAYS); },
-  addHoliday(h) { const all = LS.get("holidays", DEFAULT_HOLIDAYS); all.push({ ...h, id: Date.now() }); LS.set("holidays", all); },
-  deleteHoliday(id) { LS.set("holidays", LS.get("holidays", DEFAULT_HOLIDAYS).filter(h => h.id !== id)); },
-  getPayrolls() { return LS.get("payrolls", []); },
-  savePayroll(payroll) {
-    const all = LS.get("payrolls", []);
-    const idx = all.findIndex(p => p.period === payroll.period);
-    if (idx >= 0) all[idx] = payroll; else all.unshift(payroll);
-    LS.set("payrolls", all);
-  },
-  deletePayroll(period) { LS.set("payrolls", LS.get("payrolls", []).filter(p => p.period !== period)); },
-  savePayrollBiweekly(payroll) {
-    const all = LS.get("payrolls_bw", []);
-    const idx = all.findIndex(p => p.period === payroll.period);
-    if (idx >= 0) all[idx] = payroll; else all.unshift(payroll);
-    LS.set("payrolls_bw", all);
-  },
-  getUsers() { return LS.get("users", []); },
-  addUser(email, pw) {
-    const users = LS.get("users", []);
-    if (users.find(u => u.email === email)) return { error: "Correo ya registrado." };
-    users.push({ email, password: btoa(pw) });
-    LS.set("users", users);
-    return { ok: true };
-  },
-  loginUser(email, pw) {
-    const u = LS.get("users", []).find(u => u.email === email && u.password === btoa(pw));
-    return u ? { ok: true, email: u.email } : { error: "Correo o contraseña incorrectos." };
-  },
-  getSession() { return LS.get("session", null); },
-  setSession(email) { LS.set("session", { email }); },
-  clearSession() { LS.remove("session"); },
-  exportAll() {
-    return JSON.stringify({ employees: LS.get("employees", DEFAULT_EMPLOYEES), clock: LS.get("clock", []), holidays: LS.get("holidays", DEFAULT_HOLIDAYS), payrolls: LS.get("payrolls", []), payrolls_bw: LS.get("payrolls_bw", []), users: LS.get("users", []), exportedAt: new Date().toISOString() }, null, 2);
-  },
-  importAll(json) {
-    try {
-      const d = JSON.parse(json);
-      if (d.employees) LS.set("employees", d.employees);
-      if (d.clock) LS.set("clock", d.clock);
-      if (d.holidays) LS.set("holidays", d.holidays);
-      if (d.payrolls) LS.set("payrolls", d.payrolls);
-      if (d.payrolls_bw) LS.set("payrolls_bw", d.payrolls_bw);
-      if (d.users) LS.set("users", d.users);
-      return { ok: true };
-    } catch { return { error: "Archivo inválido." }; }
-  },
+  async deletePayroll(id) { await supabase.from("payroll_rows").delete().eq("payroll_id", id); await supabase.from("payrolls").delete().eq("id", id); },
 };
 
-// ─── Helpers ───
+// ═══ HELPERS ═══
 function getScheduledHours(dow) { return dow >= 1 && dow <= 4 ? 9 : dow === 5 ? 8 : 0; }
 
-// ─── IHSS & RAP Honduras 2025/2026 ───
-const IHSS = {
-  EM_TECHO: 11903.13,    // Techo Enfermedad y Maternidad
-  EM_TASA: 0.025,         // 2.5% trabajador
-  IVM_TECHO: 11903.13,   // Techo Invalidez, Vejez y Muerte
-  IVM_TASA: 0.025,        // 2.5% trabajador
-};
-const RAP_TASA = 0.015; // 1.5% por fondo (FEO3 y FIO3)
-// RAP employee: FEO3 = FIO3 = 1.5% × (salario - techo IHSS)
-// RL (patrono) = 4% del salario (no se descuenta al empleado)
-function calcRAP_monthly(salary) {
-  const excedente = Math.max(0, salary - IHSS.IVM_TECHO);
-  const feo3 = excedente * RAP_TASA;
-  const fio3 = feo3;
-  const rl = salary * 0.04;
-  return { feo3, fio3, employeeTotal: feo3 + fio3, rl, grandTotal: rl + feo3 + fio3 };
-}
-function calcIHSS_monthly(salary) {
-  const baseEM = Math.min(salary, IHSS.EM_TECHO);
-  const baseIVM = Math.min(salary, IHSS.IVM_TECHO);
-  const em = baseEM * IHSS.EM_TASA;
-  const ivm = baseIVM * IHSS.IVM_TASA;
-  return { em, ivm, total: em + ivm };
-}
-function calcIHSS_biweekly(salary) {
-  const m = calcIHSS_monthly(salary);
-  return { em: m.em / 2, ivm: m.ivm / 2, total: m.total / 2 };
-}
+// IHSS & RAP
+const IHSS = { EM_TECHO: 11903.13, EM_TASA: 0.025, IVM_TECHO: 11903.13, IVM_TASA: 0.025 };
+function calcIHSS_monthly(sal) { const b = Math.min(sal, IHSS.EM_TECHO); return { em: b*IHSS.EM_TASA, ivm: b*IHSS.IVM_TASA, total: b*IHSS.EM_TASA + b*IHSS.IVM_TASA }; }
+function calcIHSS_biweekly(sal) { const m = calcIHSS_monthly(sal); return { em: m.em/2, ivm: m.ivm/2, total: m.total/2 }; }
+function calcRAP_monthly(sal) { const exc = Math.max(0, sal - IHSS.IVM_TECHO); const f = exc * 0.015; return { feo3: f, fio3: f, employeeTotal: f*2, rl: sal*0.04, grandTotal: sal*0.04 + f*2 }; }
 
-// Determine which week of the month a date range falls in (1-5)
-function getWeekOfMonth(dateStr) {
-  const d = new Date(dateStr + "T12:00:00");
-  const day = d.getDate();
-  if (day <= 7) return 1;
-  if (day <= 14) return 2;
-  if (day <= 21) return 3;
-  if (day <= 28) return 4;
-  return 5;
-}
-// IHSS: applies when the period contains the last day of the month
-// (28 Feb, 30 Apr/Jun/Sep/Nov, 31 Jan/Mar/May/Jul/Aug/Oct/Dec)
-function isLastWeekOfMonth(fromDate, toDate) {
-  const from = new Date(fromDate + "T12:00:00");
-  const to = new Date(toDate + "T12:00:00");
-  // Check each day in the period — if any day is the last day of its month, IHSS applies
-  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-    const lastDayOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    if (d.getDate() === lastDayOfMonth) return true;
+function isLastWeekOfMonth(from, to) {
+  const s = new Date(from+"T12:00:00"), e = new Date(to+"T12:00:00");
+  for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)) {
+    const last = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+    if (d.getDate() === last) return true;
   }
   return false;
 }
-// RAP: applies on the second week of the month (days 8-14)
-function isSecondWeekOfMonth(fromDate) {
-  const wk = getWeekOfMonth(fromDate);
-  return wk === 2;
-}
-function formatL(n) { if (n == null || isNaN(n)) return "L. 0.00"; return "L. " + Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-function fN(n) { return (!n || isNaN(n) || n === 0) ? "" : Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-function fmtTime(t) { return t ? new Date(t).toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" }) : "—"; }
-function fmtDate(d) { return new Date(d).toLocaleDateString("es-HN", { weekday: "short", day: "2-digit", month: "short" }); }
+function isSecondWeekOfMonth(from) { const d = new Date(from+"T12:00:00").getDate(); return d >= 8 && d <= 14; }
 
+function formatL(n) { if (n==null||isNaN(n)) return "L. 0.00"; return "L. "+Number(n).toLocaleString("es-HN",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fN(n) { return (!n||isNaN(n)||n===0) ? "" : Number(n).toLocaleString("es-HN",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtTime(t) { return t ? new Date(t).toLocaleTimeString("es-HN",{hour:"2-digit",minute:"2-digit"}) : "—"; }
+function fmtDate(d) { return new Date(d).toLocaleDateString("es-HN",{weekday:"short",day:"2-digit",month:"short"}); }
+
+// ═══ CLOCK PARSER ═══
 function parseClockCSV(csvText) {
-  // Normalize: handle CRLF
-  const text = csvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const text = csvText.replace(/\r\n/g,"\n").replace(/\r/g,"\n");
   const lines = text.trim().split("\n");
   if (lines.length < 2) return [];
-  
-  // Detect separator (semicolon or comma) from header
   const sep = lines[0].includes(";") ? ";" : ",";
-  const headerCols = lines[0].split(sep).length;
-  
   const records = [];
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(sep);
     if (cols.length < 2) continue;
-    
-    const time = cols[0].trim();
-    const userId = cols[1].trim();
-    
-    // Skip empty user IDs
+    const time = cols[0].trim(), userId = cols[1].trim();
     if (!userId) continue;
-    
-    // For 10+ column format, check "Evento" column for access denied
-    if (cols.length >= 10) {
-      const evento = cols[9].trim();
-      if (evento === "Acceso denegado" || evento === "Dispositivo inicializado") continue;
-    }
-    
-    // Parse date: supports D/M/YYYY HH:MM, DD/MM/YYYY HH:MM:SS, etc.
-    let dt = null, dateStr = null;
+    if (cols.length >= 10) { const ev = cols[9].trim(); if (ev==="Acceso denegado"||ev==="Dispositivo inicializado") continue; }
     let m = time.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-    if (m) {
-      const [, p1, p2, yyyy, hh, mi, ss] = m;
-      const sec = ss || "00";
-      let dd, mm;
-      if (parseInt(p1) > 12) { dd = p1; mm = p2; }
-      else if (parseInt(p2) > 12) { mm = p1; dd = p2; }
-      else { dd = p1; mm = p2; }
-      
-      dd = String(dd).padStart(2, "0");
-      mm = String(mm).padStart(2, "0");
-      dt = new Date(+yyyy, +mm - 1, +dd, +hh, +mi, +sec);
-      dateStr = `${yyyy}-${mm}-${dd}`;
-    }
-    
-    if (!dt || !dateStr) continue;
-    records.push({ userId, dateStr, dt });
+    if (!m) continue;
+    const [,p1,p2,yyyy,hh,mi,ss] = m;
+    let dd,mm;
+    if (parseInt(p1)>12){dd=p1;mm=p2} else if(parseInt(p2)>12){mm=p1;dd=p2} else{dd=p1;mm=p2}
+    dd=String(dd).padStart(2,"0"); mm=String(mm).padStart(2,"0");
+    records.push({ userId, dateStr:`${yyyy}-${mm}-${dd}`, dt:new Date(+yyyy,+mm-1,+dd,+hh,+mi,+(ss||0)) });
   }
   return groupPunches(records);
 }
 function parseClockXLS(data) {
-  try { const wb = XLSX.read(data, { type: "array" }); const ws = wb.Sheets[wb.SheetNames[0]]; const json = XLSX.utils.sheet_to_json(ws, { header: 1 }); if (json.length < 2) return []; const records = [];
-  for (let i = 1; i < json.length; i++) { const row = json[i]; if (!row || row.length < 10) continue; const time = String(row[0] || "").trim(), userId = String(row[1] || "").trim(), evento = String(row[9] || "").trim(); if (!userId || evento === "Acceso denegado" || evento === "Dispositivo inicializado") continue;
-    let m = time.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-    if (!m) continue;
-    const [, p1, p2, yyyy, hh, mi, ss] = m;
-    let dd, mm;
-    if (parseInt(p1) > 12) { dd = p1; mm = p2; } else if (parseInt(p2) > 12) { mm = p1; dd = p2; } else { dd = p1; mm = p2; }
-    dd = String(dd).padStart(2, "0"); mm = String(mm).padStart(2, "0");
-    records.push({ userId, dateStr: `${yyyy}-${mm}-${dd}`, dt: new Date(+yyyy, +mm - 1, +dd, +hh, +mi, +(ss||0)) }); }
-  return groupPunches(records); } catch (e) { return []; }
+  try { const wb=XLSX.read(data,{type:"array"}); const ws=wb.Sheets[wb.SheetNames[0]]; const json=XLSX.utils.sheet_to_json(ws,{header:1}); if(json.length<2)return[]; const records=[];
+  for(let i=1;i<json.length;i++){const row=json[i];if(!row||row.length<2)continue;const time=String(row[0]||"").trim(),userId=String(row[1]||"").trim();if(!userId)continue;
+  if(row.length>=10){const ev=String(row[9]||"").trim();if(ev==="Acceso denegado"||ev==="Dispositivo inicializado")continue}
+  let m=time.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);if(!m)continue;const[,p1,p2,yyyy,hh,mi,ss]=m;let dd,mm;
+  if(parseInt(p1)>12){dd=p1;mm=p2}else if(parseInt(p2)>12){mm=p1;dd=p2}else{dd=p1;mm=p2}
+  dd=String(dd).padStart(2,"0");mm=String(mm).padStart(2,"0");
+  records.push({userId,dateStr:`${yyyy}-${mm}-${dd}`,dt:new Date(+yyyy,+mm-1,+dd,+hh,+mi,+(ss||0))})}
+  return groupPunches(records)}catch{return[]}
 }
 function groupPunches(records) {
-  const groups = {}; records.forEach((r) => { const key = `${r.userId}_${r.dateStr}`; if (!groups[key]) groups[key] = { userId: r.userId, date: r.dateStr, punches: [] }; groups[key].punches.push(r.dt); });
-  const entries = []; Object.values(groups).forEach((g) => { g.punches.sort((a, b) => a - b); const dd = [g.punches[0]]; for (let i = 1; i < g.punches.length; i++) if (g.punches[i] - g.punches[i - 1] > 120000) dd.push(g.punches[i]);
-  let e = { id: `${g.userId}_${g.date}`, employeeId: g.userId, date: g.date, checkIn: null, lunchOut: null, lunchIn: null, checkOut: null, punches: dd.length };
-  if (dd.length >= 4) { e.checkIn = dd[0].toISOString(); e.lunchOut = dd[1].toISOString(); e.lunchIn = dd[2].toISOString(); e.checkOut = dd[dd.length - 1].toISOString(); } else if (dd.length === 3) { e.checkIn = dd[0].toISOString(); e.lunchOut = dd[1].toISOString(); e.checkOut = dd[2].toISOString(); } else if (dd.length === 2) { e.checkIn = dd[0].toISOString(); e.checkOut = dd[1].toISOString(); } else if (dd.length === 1) { e.checkIn = dd[0].toISOString(); }
-  entries.push(e); }); return entries.sort((a, b) => a.date.localeCompare(b.date));
+  const groups={};records.forEach(r=>{const k=`${r.userId}_${r.dateStr}`;if(!groups[k])groups[k]={userId:r.userId,date:r.dateStr,punches:[]};groups[k].punches.push(r.dt)});
+  const entries=[];Object.values(groups).forEach(g=>{g.punches.sort((a,b)=>a-b);const dd=[g.punches[0]];for(let i=1;i<g.punches.length;i++)if(g.punches[i]-g.punches[i-1]>120000)dd.push(g.punches[i]);
+  let e={id:`${g.userId}_${g.date}`,employeeId:g.userId,date:g.date,checkIn:null,lunchOut:null,lunchIn:null,checkOut:null,punches:dd.length};
+  if(dd.length>=4){e.checkIn=dd[0].toISOString();e.lunchOut=dd[1].toISOString();e.lunchIn=dd[2].toISOString();e.checkOut=dd[dd.length-1].toISOString()}
+  else if(dd.length===3){e.checkIn=dd[0].toISOString();e.lunchOut=dd[1].toISOString();e.checkOut=dd[2].toISOString()}
+  else if(dd.length===2){e.checkIn=dd[0].toISOString();e.checkOut=dd[1].toISOString()}
+  else if(dd.length===1){e.checkIn=dd[0].toISOString()}
+  entries.push(e)});return entries.sort((a,b)=>a.date.localeCompare(b.date));
 }
 function calcDayHours(entry) {
-  if (!entry.checkIn || !entry.checkOut) return 0;
-  let cin = new Date(entry.checkIn);
-  const cout = new Date(entry.checkOut);
-  
-  // Grace period at entry: only if arriving between 7:50am and 8:00am, count as 8:00am
-  // If arriving earlier (7:00am, 7:30am etc), those hours DO count (could be overtime)
-  const scheduled8am = new Date(cin);
-  scheduled8am.setHours(8, 0, 0, 0);
-  const grace10before = new Date(cin);
-  grace10before.setHours(7, 50, 0, 0);
-  if (cin >= grace10before && cin < scheduled8am) cin = scheduled8am;
-  
-  let ms = cout - cin;
-  if (entry.lunchOut && entry.lunchIn) ms -= (new Date(entry.lunchIn) - new Date(entry.lunchOut));
-  else if (entry.lunchOut) ms -= 3600000;
-  else if (ms > 5 * 3600000) ms -= 3600000;
-  return Math.max(0, ms / 3600000);
-}
-function calcOvertime(entries) {
-  const GRACE = 10/60; // 10 minutes grace period in hours
-  const byEmp = {}; entries.forEach((e) => { if (!byEmp[e.employeeId]) byEmp[e.employeeId] = []; byEmp[e.employeeId].push(e); }); const results = {};
-  Object.entries(byEmp).forEach(([empId, days]) => { let totalEffective = 0, regularDays = 0, ot = { 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0 };
-  days.forEach((day) => { if (!day.checkIn || !day.checkOut) return; const dow = new Date(day.checkIn).getDay(), hrs = calcDayHours(day), scheduled = getScheduledHours(dow);
-    // Sunday = 100%
-    if (dow === 0) { ot[1.0] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; }
-    // Saturday = 25%
-    if (dow === 6) { ot[0.25] += hrs; if (hrs > 0) regularDays++; totalEffective += hrs; return; }
-    regularDays++; totalEffective += hrs;
-    // Overtime by ACTUAL EXIT TIME
-    const scheduledExit = dow === 5 ? 17 : 18;
-    const cH = new Date(day.checkOut).getHours() + new Date(day.checkOut).getMinutes() / 60;
-    const graceExit = scheduledExit + 10/60;
-    if (cH <= graceExit) return;
-    const otHours = cH - scheduledExit;
-    if (cH <= 19) { ot[0.25] += otHours; }
-    else if (cH <= 21) {
-      ot[0.25] += 1;
-      ot[0.5] += cH - 19;
-    } else {
-      ot[0.25] += 1;
-      ot[0.5] += 2;
-      ot[0.75] += cH - 21;
-    }
-  });
-  results[empId] = { totalEffective, regularDays, ot }; }); return results;
-}
-function printPayroll(payroll) {
-  const rows = payroll.rows;
-  const totals = { salary: rows.reduce((s,r)=>s+(r.salary||0),0), base: rows.reduce((s,r)=>s+r.baseSalary,0), ot: rows.reduce((s,r)=>s+r.otPay,0), ihss: rows.reduce((s,r)=>s+(r.ihssTotal||0),0), rap: rows.reduce((s,r)=>s+(r.rap||0),0), earned: rows.reduce((s,r)=>s+r.totalEarned,0), ded: rows.reduce((s,r)=>s+r.totalDeductions,0), net: rows.reduce((s,r)=>s+r.netPay,0) };
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Planilla ${payroll.period}</title>
-<style>@page{size:landscape;margin:10mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:8pt;color:#000}.header{text-align:center;margin-bottom:10px}.header img{height:36px;margin-bottom:4px}.header h2{font-size:10pt;font-weight:normal;color:#1a3a6b}.header .period{font-size:9pt;margin-top:3px;font-weight:bold;color:#0a2351}table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#0a2351;color:#fff;padding:4px 3px;font-size:6.5pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:3px;border:1px solid #c8d6e5;font-size:7.5pt}.r{text-align:right;font-family:'Courier New',monospace;font-size:7.5pt}.c{text-align:center}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351;padding:5px 3px}.net{color:#0a6847;font-weight:700}.ot-val{color:#b91c1c}.ihss{color:#6d28d9}.signatures{margin-top:30px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:180px}.sig-line{border-top:1px solid #000;margin-top:40px;padding-top:3px;font-size:8pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.print-btn{padding:8px 20px;background:#0a2351;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:6px}.close-btn{padding:8px 20px;background:#64748b;color:#fff;border:none;border-radius:8px;font-size:12px;cursor:pointer}</style></head><body>
-<div class="no-print"><button class="print-btn" onclick="window.print()">🖨️ Imprimir</button><button class="close-btn" onclick="window.close()">✕ Cerrar</button></div>
-<div class="header"><img src="${LOGO}" alt="Horeb"/><h2>Planilla de Empleados</h2><div class="period">${payroll.period}</div></div>
-<table><thead><tr>
-<th rowspan="2">Cód.</th><th rowspan="2">Nombre</th><th rowspan="2">Posición</th><th rowspan="2">Sal.Mensual</th><th rowspan="2">Sal.Diario</th><th rowspan="2">Días</th><th rowspan="2">Salario</th>
-<th colspan="4">Horas Extras</th><th rowspan="2">Sal/Hr</th><th rowspan="2">Total Extras</th>
-<th rowspan="2">Comb.</th><th rowspan="2">Vac.</th><th rowspan="2">Incap.</th><th rowspan="2">Adelanto</th><th rowspan="2">Dec.4to</th><th rowspan="2">Dec.3ro</th>
-<th rowspan="2">IHSS</th><th rowspan="2">RAP</th>
-<th rowspan="2">Devengado</th><th rowspan="2">Tot.Ded.</th><th rowspan="2">Neto</th>
-</tr><tr><th>25%</th><th>50%</th><th>75%</th><th>100%</th></tr></thead><tbody>
-${rows.map(r=>`<tr>
-<td class="c">${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td>
-<td class="r">${fN(r.salary)}</td><td class="r">${fN(r.daily)}</td><td class="c">${r.days}</td><td class="r">${fN(r.baseSalary)}</td>
-<td class="r${r.ot[0.25]>0?' ot-val':''}">${r.ot[0.25]>0?r.ot[0.25].toFixed(1):''}</td>
-<td class="r${r.ot[0.5]>0?' ot-val':''}">${r.ot[0.5]>0?r.ot[0.5].toFixed(1):''}</td>
-<td class="r${r.ot[0.75]>0?' ot-val':''}">${r.ot[0.75]>0?r.ot[0.75].toFixed(1):''}</td>
-<td class="r${r.ot[1.0]>0?' ot-val':''}">${r.ot[1.0]>0?r.ot[1.0].toFixed(1):''}</td>
-<td class="r">${fN(r.hourly)}</td><td class="r ot-val">${fN(r.otPay)}</td>
-<td class="r">${fN(r.fuel)}</td><td class="r">${fN(r.vacation)}</td><td class="r">${fN(r.incapacity)}</td>
-<td class="r">${fN(r.advance)}</td><td class="r">${fN(r.dec4)}</td><td class="r">${fN(r.dec3)}</td>
-<td class="r ihss">${fN(r.ihssTotal)}</td><td class="r ihss">${fN(r.rap)}</td>
-<td class="r" style="font-weight:600">${fN(r.totalEarned)}</td>
-<td class="r">${fN(r.totalDeductions)}</td>
-<td class="r net">${fN(r.netPay)}</td>
-</tr>`).join("")}
-<tr class="total-row">
-<td colspan="3" style="text-align:right">TOTALES</td><td class="r">${fN(totals.salary)}</td><td></td><td></td><td class="r">${fN(totals.base)}</td>
-<td colspan="4"></td><td></td><td class="r ot-val">${fN(totals.ot)}</td>
-<td colspan="6"></td>
-<td class="r ihss">${fN(totals.ihss)}</td><td class="r ihss">${fN(totals.rap)}</td>
-<td class="r" style="font-weight:700">${fN(totals.earned)}</td><td class="r">${fN(totals.ded)}</td>
-<td class="r net" style="font-size:9pt">${fN(totals.net)}</td>
-</tr></tbody></table>
-<div class="signatures"><div class="sig-box"><div class="sig-line">Elaborado por</div></div><div class="sig-box"><div class="sig-line">Revisado por</div></div><div class="sig-box"><div class="sig-line">Autorizado por</div></div></div></body></html>`;
-  const w = window.open("", "_blank"); if (w) { w.document.write(html); w.document.close(); }
+  if(!entry.checkIn||!entry.checkOut)return 0;
+  let cin=new Date(entry.checkIn);const cout=new Date(entry.checkOut);
+  // Grace: 7:50-8:00am → cap at 8:00. Before 7:50 counts (early OT)
+  const am8=new Date(cin);am8.setHours(8,0,0,0);const am750=new Date(cin);am750.setHours(7,50,0,0);
+  if(cin>=am750&&cin<am8)cin=am8;
+  let ms=cout-cin;
+  if(entry.lunchOut&&entry.lunchIn)ms-=(new Date(entry.lunchIn)-new Date(entry.lunchOut));
+  else if(entry.lunchOut)ms-=3600000;
+  else if(ms>5*3600000)ms-=3600000;
+  return Math.max(0,ms/3600000);
 }
 
-// ═══════════════════
-const TABS = [
-  { id: "dash", label: "Dashboard", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg> },
-  { id: "emp", label: "Empleados", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg> },
-  { id: "clock", label: "Reloj", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
-  { id: "pay", label: "Planilla", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> },
-  { id: "conf", label: "Confidencial", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> },
-  { id: "hist", label: "Historial", icon: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg> },
+// ═══ PRINT ═══
+function printPayroll(payroll) {
+  const rows=payroll.rows;const t={sal:rows.reduce((s,r)=>s+(r.salary||0),0),base:rows.reduce((s,r)=>s+r.baseSalary,0),ot:rows.reduce((s,r)=>s+r.otPay,0),ihss:rows.reduce((s,r)=>s+(r.ihssTotal||0),0),rap:rows.reduce((s,r)=>s+(r.rap||0),0),earned:rows.reduce((s,r)=>s+r.totalEarned,0),ded:rows.reduce((s,r)=>s+r.totalDeductions,0),net:rows.reduce((s,r)=>s+r.netPay,0)};
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Planilla ${payroll.period}</title><style>@page{size:landscape;margin:10mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:8pt}table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#0a2351;color:#fff;padding:4px 3px;font-size:6.5pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:3px;border:1px solid #c8d6e5;font-size:7.5pt}.r{text-align:right;font-family:'Courier New',monospace}.c{text-align:center}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351}.net{color:#0a6847;font-weight:700}.ot-val{color:#b91c1c}.ihss{color:#6d28d9}.header{text-align:center;margin-bottom:10px}.header img{height:36px;margin-bottom:4px}.signatures{margin-top:30px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:180px}.sig-line{border-top:1px solid #000;margin-top:40px;padding-top:3px;font-size:8pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.btn{padding:8px 20px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:6px}</style></head><body>
+<div class="no-print"><button class="btn" style="background:#0a2351;color:#fff" onclick="window.print()">🖨️ Imprimir</button><button class="btn" style="background:#64748b;color:#fff" onclick="window.close()">✕ Cerrar</button></div>
+<div class="header"><img src="${LOGO}" alt="Horeb"/><div style="font-size:10pt;color:#1a3a6b">Planilla de Empleados</div><div style="font-size:9pt;font-weight:bold;color:#0a2351;margin-top:3px">${payroll.period}</div></div>
+<table><thead><tr><th rowspan="2">Cód</th><th rowspan="2">Nombre</th><th rowspan="2">Pos.</th><th rowspan="2">Sal.M.</th><th rowspan="2">Sal.D.</th><th rowspan="2">Días</th><th rowspan="2">Salario</th><th colspan="4">Horas Extras</th><th rowspan="2">Sal/Hr</th><th rowspan="2">Tot.OT</th><th rowspan="2">IHSS</th><th rowspan="2">RAP</th><th rowspan="2">Comb.</th><th rowspan="2">Adel.</th><th rowspan="2">Deveng.</th><th rowspan="2">Tot.Ded.</th><th rowspan="2">Neto</th></tr><tr><th>25%</th><th>50%</th><th>75%</th><th>100%</th></tr></thead><tbody>
+${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td><td class="r">${fN(r.salary)}</td><td class="r">${fN(r.daily)}</td><td class="c">${r.days}</td><td class="r">${fN(r.baseSalary)}</td><td class="r${r.ot[0.25]>0?' ot-val':''}">${r.ot[0.25]>0?r.ot[0.25].toFixed(1):''}</td><td class="r${r.ot[0.5]>0?' ot-val':''}">${r.ot[0.5]>0?r.ot[0.5].toFixed(1):''}</td><td class="r${r.ot[0.75]>0?' ot-val':''}">${r.ot[0.75]>0?r.ot[0.75].toFixed(1):''}</td><td class="r${r.ot[1.0]>0?' ot-val':''}">${r.ot[1.0]>0?r.ot[1.0].toFixed(1):''}</td><td class="r">${fN(r.hourly)}</td><td class="r ot-val">${fN(r.otPay)}</td><td class="r ihss">${fN(r.ihssTotal)}</td><td class="r ihss">${fN(r.rap)}</td><td class="r">${fN(r.fuel)}</td><td class="r">${fN(r.advance)}</td><td class="r" style="font-weight:600">${fN(r.totalEarned)}</td><td class="r">${fN(r.totalDeductions)}</td><td class="r net">${fN(r.netPay)}</td></tr>`).join("")}
+<tr class="total-row"><td colspan="3" style="text-align:right">TOTALES</td><td class="r">${fN(t.sal)}</td><td></td><td></td><td class="r">${fN(t.base)}</td><td colspan="4"></td><td></td><td class="r ot-val">${fN(t.ot)}</td><td class="r ihss">${fN(t.ihss)}</td><td class="r ihss">${fN(t.rap)}</td><td colspan="2"></td><td class="r" style="font-weight:700">${fN(t.earned)}</td><td class="r">${fN(t.ded)}</td><td class="r net" style="font-size:9pt">${fN(t.net)}</td></tr></tbody></table>
+<div class="signatures"><div class="sig-box"><div class="sig-line">Elaborado por</div></div><div class="sig-box"><div class="sig-line">Revisado por</div></div><div class="sig-box"><div class="sig-line">Autorizado por</div></div></div></body></html>`;
+  const w=window.open("","_blank");if(w){w.document.write(html);w.document.close()}
+}
+
+// ═══ TABS ═══
+const TABS=[
+  {id:"dash",label:"Dashboard",icon:"📊"},
+  {id:"emp",label:"Empleados",icon:"👥"},
+  {id:"clock",label:"Reloj",icon:"🕐"},
+  {id:"pay",label:"Planilla",icon:"📋"},
+  {id:"conf",label:"Confidencial",icon:"🔒"},
+  {id:"hist",label:"Historial",icon:"📁"},
 ];
 
-export default function App() {
-  const [tab, setTab] = useState("dash");
-  const [employees, setEmployees] = useState([]);
-  const [clockEntries, setClockEntries] = useState([]);
-  const [payrolls, setPayrolls] = useState([]);
-  const [holidays, setHolidays] = useState([]);
-  const [loading, setLoading] = useState(true);
+// ═══ APP ═══
+export default function App(){
+  const[tab,setTab]=useState("dash");
+  const[employees,setEmployees]=useState([]);
+  const[clockEntries,setClockEntries]=useState([]);
+  const[payrolls,setPayrolls]=useState([]);
+  const[holidays,setHolidays]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const refresh=useCallback(async()=>{const[e,c,p,h]=await Promise.all([db.getEmployees(),db.getClockEntries(),db.getPayrolls(),db.getHolidays()]);setEmployees(e);setClockEntries(c);setPayrolls(p);setHolidays(h)},[]);
+  useEffect(()=>{refresh().then(()=>setLoading(false))},[refresh]);
 
-  const refresh = useCallback(() => { setEmployees(db.getEmployees()); setClockEntries(db.getClockEntries()); setPayrolls(db.getPayrolls()); setHolidays(db.getHolidays()); }, []);
+  if(loading)return(<div style={S.loading}><style>{CSS}</style><img src={LOGO} alt="H" style={{height:50,marginBottom:20,borderRadius:8}}/><div style={S.spinner}/><p style={{color:"rgba(255,255,255,0.6)",marginTop:14,fontSize:13}}>Cargando...</p></div>);
 
-  useEffect(() => { refresh(); setLoading(false); }, [refresh]);
-
-  // Global styles
-  const globalStyles = `
-    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-    @keyframes spin{to{transform:rotate(360deg)}}
-    @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-    @keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-    input:focus,select:focus{border-color:#1a5ab8!important;box-shadow:0 0 0 3px rgba(26,90,184,0.1)!important;outline:none}
-    button{transition:all 0.2s ease}
-    button:hover{transform:translateY(-1px)}
-    button:active{transform:translateY(0)}
-    tr:hover td{background:rgba(10,35,81,0.02)!important}
-    *{box-sizing:border-box;margin:0;padding:0}
-    ::selection{background:#1a5ab8;color:#fff}
-    ::-webkit-scrollbar{width:6px;height:6px}
-    ::-webkit-scrollbar-track{background:#f0f3f8}
-    ::-webkit-scrollbar-thumb{background:#b0bec5;border-radius:3px}
-  `;
-
-  if (loading) return (
-    <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"linear-gradient(135deg,#0a2351 0%,#163a72 50%,#1a4a8a 100%)" }}>
-      <style>{globalStyles}</style>
-      <img src={LOGO} alt="Horeb" style={{ height: 50, marginBottom: 20, borderRadius: 8 }}/>
-      <div style={{ width:36,height:36,border:"3px solid rgba(255,255,255,0.2)",borderTopColor:"#c9a227",borderRadius:"50%",animation:"spin 0.8s linear infinite" }}/>
-      <p style={{ color:"rgba(255,255,255,0.6)",marginTop:14,fontSize:13,fontFamily:"'Cormorant Garamond',Georgia,serif",letterSpacing:"0.1em",textTransform:"uppercase" }}>Cargando sistema</p>
-    </div>
-  );
-
-  const TabComp = { dash: DashboardTab, emp: EmployeesTab, clock: ClockTab, pay: PayrollTab, conf: ConfidentialTab, hist: HistoryTab }[tab];
-
-  return (
-    <div style={S.app}>
-      <style>{globalStyles}</style>
-      <header style={S.header}>
-        <div style={S.brand}>
-          <img src={LOGO} alt="Horeb" style={S.logoImg}/>
-          <div style={S.brandDivider}/>
-          <div>
-            <div style={S.brandSub}>Sistema de Planilla</div>
-          </div>
-        </div>
-        <nav style={S.nav}>
-          {TABS.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{ ...S.navBtn, ...(tab === t.id ? S.navAct : {}) }}>
-              {t.icon}<span>{t.label}</span>
-            </button>
-          ))}
-        </nav>
-      </header>
-
-      <main style={S.main}><div style={{ animation: "fadeIn 0.35s ease" }}>
-        <TabComp employees={employees} refresh={refresh} clockEntries={clockEntries} payrolls={payrolls} holidays={holidays} />
-      </div></main>
-
-      <footer style={S.footer}>
-        <span>Impresos Horeb © {new Date().getFullYear()}</span>
-        <span style={{ color: "#94a3b8" }}>Sistema de Planilla v4.0 — Base de datos local</span>
-        <div style={{display:"flex",gap:8}}>
-          <button onClick={()=>{const d=db.exportAll();const b=new Blob([d],{type:"application/json"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`horeb_backup_${new Date().toISOString().slice(0,10)}.json`;a.click()}} style={{background:"none",border:"1px solid #d0daea",borderRadius:6,padding:"4px 10px",fontSize:11,color:"#475569",cursor:"pointer",fontFamily:"inherit"}}>📥 Exportar Respaldo</button>
-          <label style={{background:"none",border:"1px solid #d0daea",borderRadius:6,padding:"4px 10px",fontSize:11,color:"#475569",cursor:"pointer",fontFamily:"inherit"}}>📤 Importar Respaldo<input type="file" accept=".json" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{const res=db.importAll(ev.target.result);if(res.ok){refresh();alert("✅ Respaldo restaurado.")}else alert("❌ "+res.error)};r.readAsText(f);e.target.value=""}}/></label>
-        </div>
-      </footer>
-    </div>
-  );
+  const T={dash:DashboardTab,emp:EmployeesTab,clock:ClockTab,pay:PayrollTab,conf:ConfidentialTab,hist:HistoryTab}[tab];
+  return(<div style={S.app}><style>{CSS}</style>
+    <header style={S.header}><div style={S.brand}><img src={LOGO} alt="H" style={S.logoImg}/><div style={S.brandDivider}/><div style={S.brandSub}>Sistema de Planilla</div></div>
+    <nav style={S.nav}>{TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{...S.navBtn,...(tab===t.id?S.navAct:{})}}><span>{t.icon}</span><span>{t.label}</span></button>)}</nav></header>
+    <main style={S.main}><T employees={employees} refresh={refresh} clockEntries={clockEntries} payrolls={payrolls} holidays={holidays}/></main>
+    <footer style={S.footer}><span>Impresos Horeb © {new Date().getFullYear()}</span><span style={{color:"#94a3b8"}}>v4.0</span></footer>
+  </div>);
 }
 
 // ═══ DASHBOARD ═══
-function DashboardTab({ employees, payrolls, holidays, refresh }) {
-  const totalSalary = employees.reduce((s, e) => s + e.salary, 0);
-  const last = payrolls.length > 0 ? payrolls[0] : null;
-  const [lastRows, setLastRows] = useState(null);
-  const [newHoliday, setNewHoliday] = useState({ date: "", name: "" });
-  useEffect(() => { if (last) setLastRows(last.rows || []); }, [last]);
-
-  const addHoliday = () => {
-    if (!newHoliday.date || !newHoliday.name) return;
-    db.addHoliday(newHoliday);
-    refresh();
-    setNewHoliday({ date: "", name: "" });
-  };
-  const removeHoliday = (id) => { db.deleteHoliday(id); refresh(); };
-  return (
-    <div>
-      <div style={S.pageHeader}><h2 style={S.title}>Panel de Control</h2><div style={S.goldLine}/></div>
-      <div style={S.grid4}>
-        <StatCard icon="👥" label="Empleados Activos" value={employees.length} accent="#1a5ab8"/>
-        <StatCard icon="💰" label="Nómina Mensual" value={formatL(totalSalary)} accent="#0a6847"/>
-        <StatCard icon="📋" label="Planillas Guardadas" value={payrolls.length} accent="#c9a227"/>
-        <StatCard icon="📅" label="Última Planilla" value={last?.period || "—"} accent="#7c3aed"/>
-      </div>
-      <div style={S.card}>
-        <h3 style={S.cardTitle}><span style={S.cardTitleIcon}>🕐</span> Horario Laboral</h3>
-        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10 }}>
-          {["Lunes","Martes","Miércoles","Jueves"].map(d=><div key={d} style={S.schedCard}><div style={S.schedDay}>{d}</div><div style={S.schedTime}>8:00am — 6:00pm</div><div style={S.schedHrs}>9 hrs efectivas</div></div>)}
-          <div style={{...S.schedCard,borderColor:"#c9a227",background:"linear-gradient(135deg,#fffbeb,#fef3c7)"}}><div style={{...S.schedDay,color:"#92400e"}}>Viernes</div><div style={S.schedTime}>8:00am — 5:00pm</div><div style={S.schedHrs}>8 hrs efectivas</div></div>
-        </div>
-        <div style={S.schedNote}>Almuerzo: 12:00 — 1:00pm · Sábado compensado de Lunes a Jueves · 44 horas semanales</div>
-      </div>
-      {last && lastRows && (
-        <div style={{...S.card,background:"linear-gradient(135deg,#0a2351,#163a72)",color:"#fff",border:"none"}}>
-          <div style={S.titleRow}>
-            <h3 style={{...S.cardTitle,color:"rgba(255,255,255,0.7)"}}>Última Planilla: <span style={{color:"#c9a227"}}>{last.period}</span></h3>
-            <button style={S.btnGold} onClick={()=>printPayroll({period:last.period,rows:lastRows})}>🖨️ Imprimir</button>
-          </div>
-          <div style={{display:"flex",gap:24,flexWrap:"wrap",marginTop:12}}>
-            <div><div style={{fontSize:11,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Devengado</div><div style={{fontSize:22,fontWeight:700,color:"#fff",fontFamily:"'JetBrains Mono',monospace"}}>{formatL(+last.total_earned)}</div></div>
-            <div><div style={{fontSize:11,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Deducciones</div><div style={{fontSize:22,fontWeight:700,color:"#f87171",fontFamily:"'JetBrains Mono',monospace"}}>{formatL(+last.total_deductions)}</div></div>
-            <div><div style={{fontSize:11,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Neto a Pagar</div><div style={{fontSize:28,fontWeight:700,color:"#c9a227",fontFamily:"'JetBrains Mono',monospace"}}>{formatL(+last.total_net)}</div></div>
-          </div>
-        </div>
-      )}
-
-      {/* Holidays Management */}
-      <div style={S.card}>
-        <h3 style={S.cardTitle}><span style={S.cardTitleIcon}>🎌</span> Días Feriados</h3>
-        <p style={{fontSize:12,color:"#64748b",marginBottom:12}}>Los feriados se pagan sin necesidad de marcación. No cuentan como falta.</p>
-        <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"flex-end"}}>
-          <div style={{display:"flex",flexDirection:"column",gap:4}}>
-            <label style={S.label}>Fecha</label>
-            <input style={{...S.input,width:160}} type="date" value={newHoliday.date} onChange={e=>setNewHoliday({...newHoliday,date:e.target.value})}/>
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:4}}>
-            <label style={S.label}>Nombre del Feriado</label>
-            <input style={{...S.input,width:220}} value={newHoliday.name} onChange={e=>setNewHoliday({...newHoliday,name:e.target.value})} placeholder="Ej: Día de la Bandera"/>
-          </div>
-          <button style={S.btnPrimary} onClick={addHoliday}>+ Agregar</button>
-        </div>
-        {holidays.length===0?<p style={{color:"#94a3b8",fontStyle:"italic",fontSize:13}}>No hay feriados registrados.</p>:(
-          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-            {holidays.map(h=>(
-              <div key={h.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 14px",background:"linear-gradient(135deg,#fffbeb,#fef3c7)",border:"1px solid #fde68a",borderRadius:8}}>
-                <span style={{fontSize:18}}>🎌</span>
-                <div>
-                  <div style={{fontSize:13,fontWeight:700,color:"#92400e"}}>{h.name}</div>
-                  <div style={{fontSize:11,color:"#a16207"}}>{fmtDate(h.date+"T12:00:00")}</div>
-                </div>
-                <button style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:"#dc2626",marginLeft:4}} onClick={()=>removeHoliday(h.id)}>✕</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+function DashboardTab({employees,payrolls,holidays,refresh}){
+  const totalSal=employees.reduce((s,e)=>s+e.salary,0);
+  const last=payrolls.length>0?payrolls[0]:null;
+  const[lastRows,setLastRows]=useState(null);
+  const[newH,setNewH]=useState({date:"",name:""});
+  useEffect(()=>{if(last)db.getPayrollRows(last.id).then(setLastRows)},[last]);
+  const addH=async()=>{if(!newH.date||!newH.name)return;await db.addHoliday(newH);await refresh();setNewH({date:"",name:""})};
+  const delH=async(id)=>{await db.deleteHoliday(id);await refresh()};
+  return(<div>
+    <h2 style={S.title}>Panel de Control</h2>
+    <div style={S.grid4}>
+      <div style={{...S.card,borderLeft:"4px solid #3b82f6",padding:16}}><div style={{fontSize:12,color:"#64748b"}}>Empleados</div><div style={{fontSize:20,fontWeight:700}}>{employees.length}</div></div>
+      <div style={{...S.card,borderLeft:"4px solid #8b5cf6",padding:16}}><div style={{fontSize:12,color:"#64748b"}}>Nómina Mensual</div><div style={{fontSize:20,fontWeight:700}}>{formatL(totalSal)}</div></div>
+      <div style={{...S.card,borderLeft:"4px solid #c9a227",padding:16}}><div style={{fontSize:12,color:"#64748b"}}>Planillas</div><div style={{fontSize:20,fontWeight:700}}>{payrolls.length}</div></div>
+      <div style={{...S.card,borderLeft:"4px solid #059669",padding:16}}><div style={{fontSize:12,color:"#64748b"}}>Última</div><div style={{fontSize:18,fontWeight:700}}>{last?.period||"—"}</div></div>
     </div>
-  );
+    {last&&lastRows&&<div style={S.card}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><h3 style={S.cardTitle}>Última: {last.period}</h3><button style={S.btnGold} onClick={()=>printPayroll({period:last.period,rows:lastRows})}>🖨️ Imprimir</button></div>
+      <div style={{display:"flex",gap:24,flexWrap:"wrap",marginTop:8}}><div><div style={{fontSize:11,color:"#64748b"}}>Neto</div><div style={{fontSize:24,fontWeight:700,color:"#059669"}}>{formatL(+last.total_net)}</div></div></div></div>}
+    <div style={S.card}><h3 style={S.cardTitle}>🎌 Días Feriados</h3>
+      <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap",alignItems:"flex-end"}}>
+        <div><label style={S.label}>Fecha</label><input style={{...S.input,width:160}} type="date" value={newH.date} onChange={e=>setNewH({...newH,date:e.target.value})}/></div>
+        <div><label style={S.label}>Nombre</label><input style={{...S.input,width:200}} value={newH.name} onChange={e=>setNewH({...newH,name:e.target.value})} placeholder="Día del Trabajo"/></div>
+        <button style={S.btnPrimary} onClick={addH}>+ Agregar</button>
+      </div>
+      {holidays.length===0?<p style={{color:"#94a3b8"}}>No hay feriados.</p>:<div style={{display:"flex",flexWrap:"wrap",gap:8}}>{holidays.map(h=><div key={h.id} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:8,fontSize:12}}><span>🎌</span><strong style={{color:"#92400e"}}>{h.name}</strong><span style={{color:"#a16207"}}>{h.date}</span><button style={{background:"none",border:"none",cursor:"pointer",color:"#dc2626"}} onClick={()=>delH(h.id)}>✕</button></div>)}</div>}
+    </div>
+  </div>);
 }
-function StatCard({icon,label,value,accent}){return<div style={{...S.card,borderTop:`3px solid ${accent}`,padding:"20px 18px"}}><div style={{display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:24}}>{icon}</span><div><div style={{fontSize:11,color:"#64748b",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em"}}>{label}</div><div style={{fontSize:20,fontWeight:700,color:"#0a2351",marginTop:2}}>{value}</div></div></div></div>}
 
 // ═══ EMPLOYEES ═══
-function EmployeesTab({ employees, refresh }) {
-  const weeklyEmployees = employees.filter(e => { const t = e.empType || "weekly"; return t === "weekly" || t === "weekly_nonclock"; });
-  const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({ id:"",name:"",position:"",salary:"",empType:"weekly" });
-  const [saving, setSaving] = useState(false);
-  const openAdd=()=>{setForm({id:"",name:"",position:"",salary:"",empType:"weekly"});setModal("new")};
-  const openEdit=(e)=>{setForm({...e,salary:String(e.salary),empType:e.empType||"weekly"});setModal(e.id)};
-  const doSave=()=>{const emp={...form,salary:parseFloat(form.salary)||0,empType:form.empType||"weekly"};if(!emp.id||!emp.name)return;setSaving(true);db.upsertEmployee(emp);refresh();setSaving(false);setModal(null)};
-  const doDelete=(id)=>{if(confirm("¿Eliminar este empleado?")) {{db.deleteEmployee(id);}refresh()}};
-  return (
-    <div>
-      <div style={S.titleRow}><div style={S.pageHeader}><h2 style={S.title}>Empleados (Semanal)</h2><div style={S.goldLine}/></div><button style={S.btnPrimary} onClick={openAdd}>+ Nuevo Empleado</button></div>
-      {modal&&(<div style={S.overlay}><div style={S.modal}>
-        <h3 style={S.modalTitle}>{modal==="new"?"Nuevo Empleado":"Editar Empleado"}</h3>
-        <div style={S.formGrid}>
-          <Field label="Código" value={form.id} onChange={v=>setForm({...form,id:v})} ph="008" disabled={modal!=="new"}/>
-          <Field label="Nombre Completo" value={form.name} onChange={v=>setForm({...form,name:v})} ph="Nombre del empleado"/>
-          <Field label="Posición" value={form.position} onChange={v=>setForm({...form,position:v})} ph="Prensista"/>
-          <Field label="Salario Mensual (L.)" value={form.salary} onChange={v=>setForm({...form,salary:v})} ph="0.00" type="number"/>
-          <Field label="Tipo" value={form.empType} onChange={v=>setForm({...form,empType:v})} type="select" options={[{v:"weekly",l:"Semanal (marca reloj)"},{v:"weekly_nonclock",l:"Semanal SIN reloj"}]}/>
-        </div>
-        <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24}}>
-          <button style={S.btnSec} onClick={()=>setModal(null)}>Cancelar</button>
-          <button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"Guardando...":"Guardar"}</button>
-        </div>
-      </div></div>)}
-      <div style={S.card}><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-        {["Cód","Nombre","Posición","Salario Mensual","Salario Diario","Salario/Hora",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3&&i<=5?"right":"left"}}>{h}</th>)}
-      </tr></thead><tbody>
-        {weeklyEmployees.map(e=><tr key={e.id} style={e.empType==="weekly_nonclock"?{background:"#f0f3f8"}:{}}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600,color:"#0a2351"}}>{e.name} {e.empType==="weekly_nonclock"&&<span style={{fontSize:9,color:"#1d4ed8",background:"#eff6ff",padding:"1px 5px",borderRadius:3,marginLeft:4}}>SIN RELOJ</span>}</td><td style={S.td}><span style={S.posBadge}>{e.position}</span></td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/30)}</td><td style={S.tdM}>{formatL(e.salary/30/8)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>)}
-      </tbody></table></div></div>
-    </div>
-  );
+function EmployeesTab({employees,refresh}){
+  const weeklyEmps=employees.filter(e=>{const t=e.empType||"weekly";return t==="weekly"||t==="weekly_nonclock"});
+  const[modal,setModal]=useState(null);const[form,setForm]=useState({id:"",name:"",position:"",salary:""});const[saving,setSaving]=useState(false);
+  const openAdd=()=>{setForm({id:"",name:"",position:"",salary:""});setModal("new")};
+  const openEdit=e=>{setForm({...e,salary:String(e.salary)});setModal(e.id)};
+  const doSave=async()=>{const emp={...form,salary:parseFloat(form.salary)||0};if(!emp.id||!emp.name)return;setSaving(true);await db.upsertEmployee(emp);await refresh();setSaving(false);setModal(null)};
+  const doDelete=async id=>{if(confirm("¿Eliminar?")){await db.deleteEmployee(id);await refresh()}};
+  return(<div>
+    <div style={S.titleRow}><h2 style={S.title}>Empleados (Semanal)</h2><button style={S.btnPrimary} onClick={openAdd}>+ Agregar</button></div>
+    {modal&&<div style={S.overlay}><div style={S.modal}><h3 style={{fontSize:18,fontWeight:700,marginBottom:16}}>{modal==="new"?"Nuevo":"Editar"}</h3>
+      <div style={S.formGrid}><Field l="Código" v={form.id} o={v=>setForm({...form,id:v})} ph="008" dis={modal!=="new"}/><Field l="Nombre" v={form.name} o={v=>setForm({...form,name:v})}/><Field l="Posición" v={form.position} o={v=>setForm({...form,position:v})}/><Field l="Salario" v={form.salary} o={v=>setForm({...form,salary:v})} t="number"/></div>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:20}}><button style={S.btnSec} onClick={()=>setModal(null)}>Cancelar</button><button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"...":"Guardar"}</button></div>
+    </div></div>}
+    <div style={S.card}><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Posición","Sal.Mensual","Sal.Diario","Sal./Hora",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3&&i<=5?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
+      {weeklyEmps.map(e=><tr key={e.id} style={e.empType==="weekly_nonclock"?{background:"#f0f3f8"}:{}}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600,color:"#0a2351"}}>{e.name} {e.empType==="weekly_nonclock"&&<span style={{fontSize:9,color:"#1d4ed8",background:"#eff6ff",padding:"1px 5px",borderRadius:3,marginLeft:4}}>SIN RELOJ</span>}</td><td style={S.td}><span style={S.posBadge}>{e.position}</span></td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/30)}</td><td style={S.tdM}>{formatL(e.salary/30/8)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>)}
+    </tbody></table></div></div>
+  </div>);
 }
 
 // ═══ CLOCK ═══
-function ClockTab({ employees, clockEntries, refresh }) {
-  const [mode,setMode]=useState("import");const [importResult,setImportResult]=useState(null);const [importing,setImporting]=useState(false);
-  const [mf,setMf]=useState({empId:"",date:new Date().toISOString().slice(0,10),cin:"08:00",lout:"12:00",lin:"13:00",cout:"18:00"});
-  const [filterEmp,setFilterEmp]=useState("");const [filterMonth,setFilterMonth]=useState(new Date().toISOString().slice(0,7));
-  const [editEntry,setEditEntry]=useState(null);
-  const [editForm,setEditForm]=useState({checkIn:"",lunchOut:"",lunchIn:"",checkOut:""});
-  const [editSaving,setEditSaving]=useState(false);
+function ClockTab({employees,clockEntries,refresh}){
+  const[mode,setMode]=useState("import");const[importResult,setImportResult]=useState(null);const[importing,setImporting]=useState(false);
+  const[mf,setMf]=useState({empId:"",date:new Date().toISOString().slice(0,10),cin:"08:00",lout:"12:00",lin:"13:00",cout:"18:00"});
+  const[filterEmp,setFilterEmp]=useState("");const[filterMonth,setFilterMonth]=useState(new Date().toISOString().slice(0,7));
+  const[editEntry,setEditEntry]=useState(null);const[editForm,setEditForm]=useState({checkIn:"",lunchOut:"",lunchIn:"",checkOut:""});const[editSaving,setEditSaving]=useState(false);
 
-  const handleFile=(e)=>{const file=e.target.files[0];if(!file)return;setImporting(true);const isXLS=file.name.match(/\.xls[xm]?$/i);
-    if(isXLS){const reader=new FileReader();reader.onload=(evt)=>{let parsed=parseClockXLS(new Uint8Array(evt.target.result));if(parsed.length===0){const tr=new FileReader();tr.onload=(e2)=>{let t=e2.target.result;if(t.includes("<table")||t.includes("<html")){const doc=new DOMParser().parseFromString(t,"text/html");const lines=[];doc.querySelectorAll("tr").forEach(r=>{lines.push(Array.from(r.querySelectorAll("td,th")).map(c=>c.textContent.trim()).join(","))});t=lines.join("\n")}finishImport(parseClockCSV(t))};tr.readAsText(file,"UTF-8");return}finishImport(parsed)};reader.readAsArrayBuffer(file)}
-    else{const reader=new FileReader();reader.onload=(evt)=>{let parsed=parseClockCSV(evt.target.result);if(parsed.length===0){const r2=new FileReader();r2.onload=(e2)=>finishImport(parseClockCSV(e2.target.result));r2.readAsText(file,"ISO-8859-1");return}finishImport(parsed)};reader.readAsText(file,"UTF-8")}e.target.value=""};
-  const finishImport=(parsed)=>{if(parsed.length===0){setImportResult({error:"No se encontraron registros válidos."});setImporting(false);return}
-    db.insertClockEntries(parsed);
-    refresh();
-    const added = parsed.length;
-    setImportResult({added, total:parsed.length, skipped:0});
-    setImporting(false);
-  };
-  const addManual=()=>{if(!mf.empId)return;const entry={id:`${mf.empId}_${mf.date}_m${Date.now()}`,employeeId:mf.empId,date:mf.date,checkIn:`${mf.date}T${mf.cin}:00`,lunchOut:`${mf.date}T${mf.lout}:00`,lunchIn:`${mf.date}T${mf.lin}:00`,checkOut:`${mf.date}T${mf.cout}:00`,punches:4};db.insertClockEntries([entry]);refresh()};
-  const removeEntry=(id)=>{db.deleteClockEntry(id);refresh()};
-  const clearAll=()=>{if(confirm("¿Borrar TODAS las marcaciones?")) {db.deleteAllClockEntries();refresh()}};
+  const finishImport=async(parsed)=>{if(parsed.length===0){setImportResult({error:"No se encontraron registros válidos."});setImporting(false);return}
+    await db.insertClockEntries(parsed);await refresh();setImportResult({added:parsed.length});setImporting(false)};
 
-  // ─── Edit functions ───
-  const extractTime = (isoStr) => {
-    if (!isoStr) return "";
-    try { const d = new Date(isoStr); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
-    catch { return ""; }
-  };
-  const openEdit = (entry) => {
-    setEditEntry(entry);
-    setEditForm({
-      checkIn: extractTime(entry.checkIn),
-      lunchOut: extractTime(entry.lunchOut),
-      lunchIn: extractTime(entry.lunchIn),
-      checkOut: extractTime(entry.checkOut),
-    });
-  };
-  const saveEdit = () => {
-    if (!editEntry) return;
-    setEditSaving(true);
-    const d = editEntry.date;
-    const toISO = (time) => time ? new Date(`${d}T${time}:00`).toISOString() : null;
-    const updated = {
-      id: editEntry.id,
-      employeeId: editEntry.employeeId,
-      date: d,
-      checkIn: toISO(editForm.checkIn),
-      lunchOut: toISO(editForm.lunchOut),
-      lunchIn: toISO(editForm.lunchIn),
-      checkOut: toISO(editForm.checkOut),
-    };
-    db.updateClockEntry(updated);
-    refresh();
-    setEditSaving(false);
-    setEditEntry(null);
-  };
+  const handleFile=e=>{const file=e.target.files[0];if(!file)return;setImporting(true);setImportResult(null);
+    const isXLS=file.name.match(/\.xls[xm]?$/i)&&!file.name.match(/\.csv$/i);
+    const tryParse=text=>{let p=parseClockCSV(text);if(p.length>0)return p;return parseClockCSV(text.replace(/;/g,","))};
+    if(isXLS){const r=new FileReader();r.onload=async evt=>{let p=parseClockXLS(new Uint8Array(evt.target.result));if(p.length===0){const r2=new FileReader();r2.onload=async e2=>{let t=e2.target.result;if(t.includes("<table")){const doc=new DOMParser().parseFromString(t,"text/html");const lines=[];doc.querySelectorAll("tr").forEach(r=>{lines.push(Array.from(r.querySelectorAll("td,th")).map(c=>c.textContent.trim()).join(","))});t=lines.join("\n")}await finishImport(tryParse(t))};r2.readAsText(file,"ISO-8859-1");return}await finishImport(p)};r.readAsArrayBuffer(file)}
+    else{const r=new FileReader();r.onload=async evt=>{let p=tryParse(evt.target.result);if(p.length>0){await finishImport(p);return}const r2=new FileReader();r2.onload=async e2=>{await finishImport(tryParse(e2.target.result))};r2.readAsText(file,"ISO-8859-1")};r.readAsText(file,"UTF-8")}
+    e.target.value=""};
 
-  // ─── Error detection ───
-  const hasError = (entry) => {
-    const dow = new Date(entry.date + "T12:00:00").getDay();
-    if (entry.checkIn && !entry.checkOut && dow === 5) return "⚠️ VIERNES SIN SALIDA — Editar y poner 5:00pm";
-    if (!entry.checkIn && !entry.checkOut) return "Sin marcaciones";
-    if (entry.checkIn && !entry.checkOut) return "Falta hora de salida";
-    if (!entry.checkIn && entry.checkOut) return "Falta hora de entrada";
-    const hrs = calcDayHours(entry);
-    if (hrs <= 0) return "0 horas registradas";
-    if (hrs > 16) return "Más de 16 horas";
-    if (!entry.lunchOut && !entry.lunchIn && hrs > 5) return "Sin marcación de almuerzo";
-    if (entry.lunchOut && !entry.lunchIn) return "Falta regreso de almuerzo";
-    if (!entry.lunchOut && entry.lunchIn) return "Falta salida de almuerzo";
-    return null;
-  };
+  const addManual=async()=>{if(!mf.empId)return;const entry={id:`${mf.empId}_${mf.date}_m${Date.now()}`,employeeId:mf.empId,date:mf.date,checkIn:`${mf.date}T${mf.cin}:00`,lunchOut:`${mf.date}T${mf.lout}:00`,lunchIn:`${mf.date}T${mf.lin}:00`,checkOut:`${mf.date}T${mf.cout}:00`,punches:4};await db.insertClockEntries([entry]);await refresh()};
+  const removeEntry=async id=>{await db.deleteClockEntry(id);await refresh()};
+  const clearAll=async()=>{if(confirm("¿Borrar TODO?")){await db.deleteAllClockEntries();await refresh()}};
+
+  const extractTime=iso=>{if(!iso)return"";try{const d=new Date(iso);return`${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`}catch{return""}};
+  const openEdit=entry=>{setEditEntry(entry);setEditForm({checkIn:extractTime(entry.checkIn),lunchOut:extractTime(entry.lunchOut),lunchIn:extractTime(entry.lunchIn),checkOut:extractTime(entry.checkOut)})};
+  const saveEdit=async()=>{if(!editEntry)return;setEditSaving(true);const d=editEntry.date;const toISO=t=>t?new Date(`${d}T${t}:00`).toISOString():null;
+    await db.updateClockEntry({id:editEntry.id,employeeId:editEntry.employeeId,date:d,checkIn:toISO(editForm.checkIn),lunchOut:toISO(editForm.lunchOut),lunchIn:toISO(editForm.lunchIn),checkOut:toISO(editForm.checkOut)});
+    await refresh();setEditSaving(false);setEditEntry(null)};
+
+  const hasError=entry=>{const dow=new Date(entry.date+"T12:00:00").getDay();if(entry.checkIn&&!entry.checkOut&&dow===5)return"VIERNES SIN SALIDA";if(!entry.checkIn&&!entry.checkOut)return"Sin marcaciones";if(entry.checkIn&&!entry.checkOut)return"Falta salida";if(!entry.checkIn)return"Falta entrada";const hrs=calcDayHours(entry);if(hrs>16)return"Más de 16hrs";if(!entry.lunchOut&&!entry.lunchIn&&hrs>5)return"Sin almuerzo";return null};
 
   const filtered=clockEntries.filter(e=>(!filterEmp||e.employeeId===filterEmp)&&(!filterMonth||e.date.startsWith(filterMonth))).sort((a,b)=>b.date.localeCompare(a.date)||(a.employeeId||"").localeCompare(b.employeeId||""));
   const getN=id=>employees.find(e=>e.id===id)?.name||`ID ${id}`;
-  const errorCount = filtered.filter(e => hasError(e)).length;
+  const errCount=filtered.filter(e=>hasError(e)).length;
 
-  return (
-    <div>
-      <div style={S.pageHeader}><h2 style={S.title}>Reloj Marcador</h2><div style={S.goldLine}/></div>
-
-      {/* Edit Modal */}
-      {editEntry && (
-        <div style={S.overlay}><div style={S.modal}>
-          <h3 style={S.modalTitle}>Editar Marcación</h3>
-          <div style={{background:"#f0f3f8",borderRadius:10,padding:14,marginBottom:18}}>
-            <div style={{fontSize:14,fontWeight:700,color:"#0a2351"}}>{getN(editEntry.employeeId)}</div>
-            <div style={{fontSize:13,color:"#475569",marginTop:2}}>{fmtDate(editEntry.date+"T12:00:00")} — {editEntry.date}</div>
-            {hasError(editEntry) && <div style={{marginTop:8,padding:"6px 10px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:6,fontSize:12,color:"#dc2626",fontWeight:600}}>⚠️ {hasError(editEntry)}</div>}
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <div style={{display:"flex",flexDirection:"column",gap:5}}>
-              <label style={S.label}>Hora Entrada</label>
-              <input style={S.input} type="time" value={editForm.checkIn} onChange={e=>setEditForm({...editForm,checkIn:e.target.value})}/>
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:5}}>
-              <label style={S.label}>Sale Almuerzo</label>
-              <input style={S.input} type="time" value={editForm.lunchOut} onChange={e=>setEditForm({...editForm,lunchOut:e.target.value})}/>
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:5}}>
-              <label style={S.label}>Regresa Almuerzo</label>
-              <input style={S.input} type="time" value={editForm.lunchIn} onChange={e=>setEditForm({...editForm,lunchIn:e.target.value})}/>
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:5}}>
-              <label style={S.label}>Hora Salida</label>
-              <input style={S.input} type="time" value={editForm.checkOut} onChange={e=>setEditForm({...editForm,checkOut:e.target.value})}/>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24}}>
-            <button style={S.btnSec} onClick={()=>setEditEntry(null)}>Cancelar</button>
-            <button style={S.btnPrimary} onClick={saveEdit} disabled={editSaving}>{editSaving?"Guardando...":"Guardar Cambios"}</button>
-          </div>
-        </div></div>
-      )}
-
-      <div style={S.card}>
-        <div style={{display:"flex",gap:8,marginBottom:20}}>
-          <button style={mode==="import"?S.btnPrimary:S.btnSec} onClick={()=>setMode("import")}>📥 Importar Archivo</button>
-          <button style={mode==="manual"?S.btnPrimary:S.btnSec} onClick={()=>setMode("manual")}>✍️ Entrada Manual</button>
-        </div>
-        {mode==="import"?(<div>
-          <p style={{fontSize:13,color:"#475569",marginBottom:14,lineHeight:1.6}}>Sube el archivo <strong>.xls</strong> o <strong>.csv</strong> exportado del reloj marcador. El sistema agrupa automáticamente las 4 marcaciones diarias por empleado.</p>
-          <label style={S.fileLabel}>{importing?"⏳ Procesando archivo...":"📄 Seleccionar archivo del reloj (.xls / .csv)"}<input type="file" accept=".csv,.txt,.xls,.xlsx" onChange={handleFile} style={{display:"none"}} disabled={importing}/></label>
-          {importResult&&(<div style={{marginTop:14,padding:14,borderRadius:10,background:importResult.error?"#fef2f2":"#f0fdf4",border:`1px solid ${importResult.error?"#fecaca":"#bbf7d0"}`}}>{importResult.error?<p style={{color:"#dc2626",fontSize:13}}>⚠️ {importResult.error}</p>:<p style={{color:"#0a6847",fontSize:13,fontWeight:500}}>✅ <strong>{importResult.added}</strong> registros guardados en base de datos.{importResult.skipped>0&&` (${importResult.skipped} duplicados omitidos)`}</p>}</div>)}
-        </div>):(<div style={S.formGrid}>
-          <Field label="Empleado" value={mf.empId} onChange={v=>setMf({...mf,empId:v})} type="select" options={[{v:"",l:"— Seleccionar —"},...employees.map(e=>({v:e.id,l:`${e.id} - ${e.name}`}))]}/>
-          <Field label="Fecha" value={mf.date} onChange={v=>setMf({...mf,date:v})} type="date"/>
-          <Field label="Entrada" value={mf.cin} onChange={v=>setMf({...mf,cin:v})} type="time"/>
-          <Field label="Sale Almuerzo" value={mf.lout} onChange={v=>setMf({...mf,lout:v})} type="time"/>
-          <Field label="Regresa" value={mf.lin} onChange={v=>setMf({...mf,lin:v})} type="time"/>
-          <Field label="Salida" value={mf.cout} onChange={v=>setMf({...mf,cout:v})} type="time"/>
-          <div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={addManual}>Registrar</button></div>
-        </div>)}
-      </div>
-
-      <div style={S.card}>
-        <div style={S.titleRow}>
-          <h3 style={S.cardTitle}>
-            <span style={S.cardTitleIcon}>📋</span> Registros ({filtered.length})
-            {errorCount > 0 && <span style={{marginLeft:10,padding:"3px 10px",background:"#fef2f2",color:"#dc2626",borderRadius:20,fontSize:12,fontWeight:700,border:"1px solid #fecaca"}}>⚠️ {errorCount} con errores</span>}
-          </h3>
-          {clockEntries.length>0&&<button style={{...S.btnDanger}} onClick={clearAll}>Borrar Todo</button>}
-        </div>
-        <div style={{display:"flex",gap:12,marginBottom:14,flexWrap:"wrap"}}>
-          <select style={{...S.input,width:220}} value={filterEmp} onChange={e=>setFilterEmp(e.target.value)}><option value="">Todos los empleados</option>{employees.map(e=><option key={e.id} value={e.id}>{e.id} - {e.name}</option>)}</select>
-          <input style={{...S.input,width:170}} type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
-        </div>
-        {filtered.length===0?<p style={{color:"#94a3b8",fontStyle:"italic"}}>No hay registros para este filtro.</p>:(
-          <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Empleado","Fecha","Entrada","Sal.Almuerzo","Reg.Almuerzo","Salida","Hrs Efect.","Extra","Estado",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=6&&i<=7?"right":"left",...(i>=8?{textAlign:"center"}:{})}}>{h}</th>)}
-          </tr></thead><tbody>
-            {filtered.map(e=>{const hrs=calcDayHours(e),dow=new Date(e.date+"T12:00:00").getDay(),extra=Math.max(0,hrs-getScheduledHours(dow)),isWE=dow===0||dow===6;
-            const error = hasError(e);
-            const rowBg = error ? "#fef2f2" : isWE ? "#fffbeb" : {};
-            return(<tr key={e.id} style={{background:rowBg}}>
-              <td style={{...S.td,fontWeight:600,color:"#0a2351",whiteSpace:"nowrap"}}>{getN(e.employeeId)}</td>
-              <td style={S.td}>{fmtDate(e.date+"T12:00:00")}{isWE&&<span style={{marginLeft:4,fontSize:10,color:"#c9a227",fontWeight:700,background:"#fffbeb",padding:"1px 5px",borderRadius:4}}>{dow===0?"DOM":"SÁB"}</span>}</td>
-              <td style={{...S.td,color:e.checkIn?"#0a6847":"#dc2626",fontWeight:600}}>{e.checkIn?fmtTime(e.checkIn):<span style={{color:"#dc2626"}}>—</span>}</td>
-              <td style={{...S.td,color:"#92400e"}}>{fmtTime(e.lunchOut)}</td>
-              <td style={{...S.td,color:"#92400e"}}>{fmtTime(e.lunchIn)}</td>
-              <td style={{...S.td,color:e.checkOut?"#b91c1c":"#dc2626",fontWeight:600}}>{e.checkOut?fmtTime(e.checkOut):<span style={{color:"#dc2626"}}>—</span>}</td>
-              <td style={{...S.td,textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:12}}>{hrs.toFixed(1)}h</td>
-              <td style={{...S.td,textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:extra>0?"#b91c1c":"#cbd5e1",fontWeight:extra>0?700:400}}>{extra>0?`+${extra.toFixed(1)}h`:"—"}</td>
-              <td style={{...S.td,textAlign:"center"}}>
-                {error
-                  ? <span style={{fontSize:11,color:"#dc2626",fontWeight:600,background:"#fef2f2",padding:"2px 8px",borderRadius:4,border:"1px solid #fecaca",whiteSpace:"nowrap"}}>⚠️ {error}</span>
-                  : <span style={{fontSize:11,color:"#0a6847",fontWeight:500}}>✓ OK</span>
-                }
-              </td>
-              <td style={{...S.td,textAlign:"center",whiteSpace:"nowrap"}}>
-                <button style={{...S.tblBtn,color:"#0a2351",borderColor:"#b0c4de"}} onClick={()=>openEdit(e)}>✏️ Editar</button>
-                <button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>removeEntry(e.id)}>✕</button>
-              </td>
-            </tr>)})}
-          </tbody></table></div>)}
-      </div>
+  return(<div>
+    <h2 style={S.title}>Reloj Marcador</h2>
+    {editEntry&&<div style={S.overlay}><div style={S.modal}><h3 style={{fontSize:18,fontWeight:700,marginBottom:16}}>Editar Marcación</h3>
+      <div style={{background:"#f0f3f8",borderRadius:10,padding:12,marginBottom:16}}><div style={{fontWeight:700,color:"#0a2351"}}>{getN(editEntry.employeeId)}</div><div style={{fontSize:13,color:"#475569"}}>{fmtDate(editEntry.date+"T12:00:00")}</div>
+        {hasError(editEntry)&&<div style={{marginTop:6,padding:"4px 8px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:6,fontSize:12,color:"#dc2626",fontWeight:600}}>⚠️ {hasError(editEntry)}</div>}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><div><label style={S.label}>Entrada</label><input style={S.input} type="time" value={editForm.checkIn} onChange={e=>setEditForm({...editForm,checkIn:e.target.value})}/></div><div><label style={S.label}>Sale Almuerzo</label><input style={S.input} type="time" value={editForm.lunchOut} onChange={e=>setEditForm({...editForm,lunchOut:e.target.value})}/></div><div><label style={S.label}>Regresa</label><input style={S.input} type="time" value={editForm.lunchIn} onChange={e=>setEditForm({...editForm,lunchIn:e.target.value})}/></div><div><label style={S.label}>Salida</label><input style={S.input} type="time" value={editForm.checkOut} onChange={e=>setEditForm({...editForm,checkOut:e.target.value})}/></div></div>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:20}}><button style={S.btnSec} onClick={()=>setEditEntry(null)}>Cancelar</button><button style={S.btnPrimary} onClick={saveEdit} disabled={editSaving}>{editSaving?"...":"Guardar"}</button></div>
+    </div></div>}
+    <div style={S.card}>
+      <div style={{display:"flex",gap:8,marginBottom:16}}><button style={mode==="import"?S.btnPrimary:S.btnSec} onClick={()=>setMode("import")}>📥 Importar</button><button style={mode==="manual"?S.btnPrimary:S.btnSec} onClick={()=>setMode("manual")}>✍️ Manual</button></div>
+      {mode==="import"?<div><p style={{fontSize:13,color:"#475569",marginBottom:12}}>Sube el archivo <strong>.xls</strong> o <strong>.csv</strong> del reloj.</p>
+        <label style={S.fileLabel}>{importing?"⏳ Procesando...":"📄 Seleccionar archivo"}<input type="file" accept=".csv,.txt,.xls,.xlsx" onChange={handleFile} style={{display:"none"}} disabled={importing}/></label>
+        {importResult&&<div style={{marginTop:12,padding:12,borderRadius:8,background:importResult.error?"#fef2f2":"#f0fdf4",border:`1px solid ${importResult.error?"#fecaca":"#bbf7d0"}`}}>{importResult.error?<p style={{color:"#dc2626",fontSize:13}}>⚠️ {importResult.error}</p>:<p style={{color:"#059669",fontSize:13}}>✅ {importResult.added} registros importados.</p>}</div>}
+      </div>:<div style={S.formGrid}><Field l="Empleado" v={mf.empId} o={v=>setMf({...mf,empId:v})} t="select" opts={[{v:"",l:"—"}, ...employees.map(e=>({v:e.id,l:`${e.id}-${e.name}`}))]}/><Field l="Fecha" v={mf.date} o={v=>setMf({...mf,date:v})} t="date"/><Field l="Entrada" v={mf.cin} o={v=>setMf({...mf,cin:v})} t="time"/><Field l="Sal.Alm" v={mf.lout} o={v=>setMf({...mf,lout:v})} t="time"/><Field l="Reg.Alm" v={mf.lin} o={v=>setMf({...mf,lin:v})} t="time"/><Field l="Salida" v={mf.cout} o={v=>setMf({...mf,cout:v})} t="time"/><div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={addManual}>Registrar</button></div></div>}
     </div>
-  );
+    <div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>Registros ({filtered.length}) {errCount>0&&<span style={{marginLeft:8,padding:"2px 8px",background:"#fef2f2",color:"#dc2626",borderRadius:20,fontSize:12,fontWeight:700}}>⚠️ {errCount}</span>}</h3>{clockEntries.length>0&&<button style={{...S.btnSec,color:"#dc2626",fontSize:12}} onClick={clearAll}>Borrar Todo</button>}</div>
+      <div style={{display:"flex",gap:12,marginBottom:12,flexWrap:"wrap"}}><select style={{...S.input,width:200}} value={filterEmp} onChange={e=>setFilterEmp(e.target.value)}><option value="">Todos</option>{employees.map(e=><option key={e.id} value={e.id}>{e.id}-{e.name}</option>)}</select><input style={{...S.input,width:160}} type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/></div>
+      {filtered.length===0?<p style={{color:"#94a3b8"}}>No hay registros.</p>:<div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Empleado","Fecha","Entrada","Sal.Alm","Reg.Alm","Salida","Hrs","Extra","Estado",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=6?"right":"left",...(i>=8?{textAlign:"center"}:{})}}>{h}</th>)}</tr></thead><tbody>
+        {filtered.map(e=>{const hrs=calcDayHours(e),dow=new Date(e.date+"T12:00:00").getDay(),extra=Math.max(0,hrs-getScheduledHours(dow)),isWE=dow===0||dow===6,error=hasError(e);
+        return<tr key={e.id} style={{background:error?"#fef2f2":isWE?"#fffbeb":"transparent"}}>
+          <td style={{...S.td,fontWeight:600,color:"#0a2351",whiteSpace:"nowrap"}}>{getN(e.employeeId)}</td>
+          <td style={S.td}>{fmtDate(e.date+"T12:00:00")}{isWE&&<span style={{marginLeft:4,fontSize:10,color:"#c9a227",fontWeight:700}}>{dow===0?"DOM":"SÁB"}</span>}</td>
+          <td style={{...S.td,color:e.checkIn?"#059669":"#dc2626",fontWeight:600}}>{fmtTime(e.checkIn)}</td>
+          <td style={{...S.td,color:"#92400e"}}>{fmtTime(e.lunchOut)}</td><td style={{...S.td,color:"#92400e"}}>{fmtTime(e.lunchIn)}</td>
+          <td style={{...S.td,color:e.checkOut?"#b91c1c":"#dc2626",fontWeight:600}}>{fmtTime(e.checkOut)}</td>
+          <td style={{...S.td,textAlign:"right",fontFamily:"monospace",fontSize:12}}>{hrs.toFixed(1)}h</td>
+          <td style={{...S.td,textAlign:"right",fontFamily:"monospace",fontSize:12,color:extra>0?"#b91c1c":"#cbd5e1",fontWeight:extra>0?700:400}}>{extra>0?`+${extra.toFixed(1)}h`:"—"}</td>
+          <td style={{...S.td,textAlign:"center"}}>{error?<span style={{fontSize:11,color:"#dc2626",fontWeight:600}}>⚠️ {error}</span>:<span style={{fontSize:11,color:"#059669"}}>✓</span>}</td>
+          <td style={{...S.td,textAlign:"center",whiteSpace:"nowrap"}}><button style={{...S.tblBtn,color:"#0a2351"}} onClick={()=>openEdit(e)}>✏️</button><button style={{...S.tblBtn,color:"#dc2626"}} onClick={()=>removeEntry(e.id)}>✕</button></td>
+        </tr>})}
+      </tbody></table></div>}
+    </div>
+  </div>);
 }
 
 // ═══ PAYROLL ═══
-function PayrollTab({ employees, clockEntries, refresh, holidays }) {
-  const [weekNum,setWeekNum]=useState("");const [from,setFrom]=useState("");const [to,setTo]=useState("");const [result,setResult]=useState(null);const [adj,setAdj]=useState({});const [saving,setSaving]=useState(false);
-
-  const weeklyEmps = employees.filter(e => { const t = e.empType || "weekly"; return t === "weekly" || t === "weekly_nonclock"; });
+function PayrollTab({employees,clockEntries,refresh,holidays}){
+  const[weekNum,setWeekNum]=useState("");const[from,setFrom]=useState("");const[to,setTo]=useState("");const[result,setResult]=useState(null);const[adj,setAdj]=useState({});const[saving,setSaving]=useState(false);
+  const weeklyEmps=employees.filter(e=>{const t=e.empType||"weekly";return t==="weekly"||t==="weekly_nonclock"});
 
   const generate=()=>{
-    if(!from||!to)return alert("Selecciona las fechas.");
-    const fs=from.slice(0,10), ts=to.slice(0,10);
-
-    // Filter clock entries in date range
+    if(!from||!to)return alert("Selecciona fechas.");
+    const fs=from.slice(0,10),ts=to.slice(0,10);
     const pe=clockEntries.filter(c=>{const d=String(c.date).slice(0,10);return d>=fs&&d<=ts});
+    const holidayDates=new Set(holidays.filter(h=>h.date>=fs&&h.date<=ts).map(h=>h.date));
+    const holidayNames={};holidays.forEach(h=>{if(h.date>=fs&&h.date<=ts)holidayNames[h.date]=h.name});
+    const byEmp={};pe.forEach(e=>{if(!byEmp[e.employeeId])byEmp[e.employeeId]=[];byEmp[e.employeeId].push(e)});
 
-    // Get holidays in this period
-    const holidayDates = new Set(holidays.filter(h => h.date >= fs && h.date <= ts).map(h => h.date));
-    const holidayNames = {};
-    holidays.forEach(h => { if (h.date >= fs && h.date <= ts) holidayNames[h.date] = h.name; });
-    // Count working days in period (Mon-Fri, excluding first Friday)
-    // NOTE: Holidays ARE counted as working days (they are paid and count as "worked")
-    // The employee only needs clock entries for non-holiday weekdays
-    const workingDaysInPeriod = (() => {
-      let count = 0;
-      const start = new Date(fs + "T12:00:00");
-      const end = new Date(ts + "T12:00:00");
-      const firstDate = fs;
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const dow = d.getDay();
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        const dateStr = `${yyyy}-${mm}-${dd}`;
-        const isWeekday = dow >= 1 && dow <= 5;
-        const isFirstFriday = dateStr === firstDate && dow === 5;
-        // Count ALL weekdays except first Friday (holidays included as they count as worked)
-        if (isWeekday && !isFirstFriday) count++;
+    // Working days (Mon-Fri excl first Friday, holidays INCLUDED as they count as worked)
+    let workDays=0;
+    const s0=new Date(fs+"T12:00:00"),e0=new Date(ts+"T12:00:00");
+    for(let d=new Date(s0);d<=e0;d.setDate(d.getDate()+1)){const dow=d.getDay();const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;if(dow>=1&&dow<=5&&!(ds===fs&&dow===5))workDays++}
+
+    // Count holidays on weekdays (excl first Friday)
+    let holOnWD=0;
+    for(let d=new Date(s0);d<=e0;d.setDate(d.getDate()+1)){const dow=d.getDay();const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;if(dow>=1&&dow<=5&&!(ds===fs&&dow===5)&&holidayDates.has(ds))holOnWD++}
+
+    const applyIHSS=isLastWeekOfMonth(fs,ts);const applyRAP=isSecondWeekOfMonth(fs);
+    const autoFills=[];
+
+    const rows=weeklyEmps.map(emp=>{
+      const isNC=emp.empType==="weekly_nonclock";
+      if(isNC){
+        const daily=emp.salary/30,hourly=daily/8;const a=adj[emp.id]||{};const faltas=+a.faltas||0;
+        const daysPaid=Math.max(0,7-(faltas*2)),baseSalary=daily*daysPaid;
+        const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{em:0,ivm:0,total:0};
+        const rapD=applyRAP?calcRAP_monthly(emp.salary):{employeeTotal:0};
+        const fuel=+a.fuel||0,vacation=+a.vacation||0,incapacity=+a.incapacity||0,advance=+a.advance||0,dec4=+a.dec4||0,dec3=+a.dec3||0,otherDed=+a.otherDed||0;
+        const totalEarned=baseSalary+fuel+vacation+incapacity+dec4+dec3;
+        const totalDeductions=ihss.total+rapD.employeeTotal+advance+otherDed;
+        return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,daily,hourly,isNonClock:true,daysWorked:workDays-faltas,absences:faltas,daysPaid,days:daysPaid,effectiveHrs:0,baseSalary,ot:{0.25:0,0.5:0,0.75:0,1.0:0},otPay:0,ihssTotal:ihss.total,rap:rapD.employeeTotal,fuel,vacation,incapacity,advance,dec4,dec3,otherDed,totalEarned,totalDeductions,netPay:totalEarned-totalDeductions};
       }
-      return count;
-    })();
+      // Clock employees
+      let empEntries=(byEmp[emp.id]||[]).map(e=>{
+        if(e.checkIn&&!e.checkOut){const dow=new Date(e.date+"T12:00:00").getDay();if(dow>=1&&dow<=5){const t=dow===5?"17:00:00":"18:00:00";autoFills.push({name:emp.name,date:e.date,time:dow===5?"5pm":"6pm"});return{...e,checkOut:`${e.date}T${t}`}}}return e});
 
-    // Count how many holidays fall on weekdays in this period (excluding first Friday)
-    const holidaysOnWeekdays = (() => {
-      let count = 0;
-      const start = new Date(fs + "T12:00:00");
-      const end = new Date(ts + "T12:00:00");
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const dow = d.getDay();
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        const dateStr = `${yyyy}-${mm}-${dd}`;
-        const isFirstFriday = dateStr === fs && dow === 5;
-        if (dow >= 1 && dow <= 5 && !isFirstFriday && holidayDates.has(dateStr)) count++;
-      }
-      return count;
-    })();
+      const clockedDays=empEntries.filter(e=>{if(!e.checkIn||!e.checkOut)return false;const dow=new Date(e.date+"T12:00:00").getDay();return dow>=1&&dow<=5&&!holidayDates.has(e.date)&&!(e.date===fs&&dow===5)}).length;
+      const daysWorked=clockedDays+holOnWD;
+      const absences=Math.max(0,workDays-daysWorked);const daysPaid=Math.max(0,7-(absences*2));
+      const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
 
-    // Group entries by employee
-    const byEmp = {};
-    pe.forEach(e => {
-      if (!byEmp[e.employeeId]) byEmp[e.employeeId] = [];
-      byEmp[e.employeeId].push(e);
+      // OT by exit time
+      let ot={0.25:0,0.5:0,0.75:0,1.0:0},totalEff=0;
+      empEntries.forEach(en=>{if(!en.checkIn||!en.checkOut)return;const dow=new Date(en.checkIn).getDay();const hrs=calcDayHours(en);totalEff+=hrs;
+        if(dow===0||holidayDates.has(en.date)){ot[1.0]+=hrs;return}
+        if(dow===6){ot[0.25]+=hrs;return}
+        const schedExit=dow===5?17:18;const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
+        if(cH<=schedExit+10/60)return;const otH=cH-schedExit;
+        if(cH<=19)ot[0.25]+=otH;else if(cH<=21){ot[0.25]+=1;ot[0.5]+=cH-19}else{ot[0.25]+=1;ot[0.5]+=2;ot[0.75]+=cH-21}});
+      const otPay=Object.entries(ot).reduce((s,[r,h])=>s+h*hourly*(1+parseFloat(r)),0);
+
+      const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{total:0};
+      const rapD=applyRAP?calcRAP_monthly(emp.salary):{employeeTotal:0};
+      const a=adj[emp.id]||{};const fuel=+a.fuel||0,vacation=+a.vacation||0,incapacity=+a.incapacity||0,advance=+a.advance||0,dec4=+a.dec4||0,dec3=+a.dec3||0,otherDed=+a.otherDed||0;
+      const totalEarned=baseSalary+otPay+fuel+vacation+incapacity+dec4+dec3;
+      const totalDeductions=ihss.total+rapD.employeeTotal+advance+otherDed;
+      return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,daily,hourly,daysWorked,absences,daysPaid,days:daysPaid,effectiveHrs:totalEff,baseSalary,ot,otPay,ihssTotal:ihss.total,rap:rapD.employeeTotal,fuel,vacation,incapacity,advance,dec4,dec3,otherDed,totalEarned,totalDeductions,netPay:totalEarned-totalDeductions};
     });
-
-    const fridayAutoFills = []; // Track auto-filled fridays for warnings
-
-    const rows = weeklyEmps.map(emp => {
-      const isNonClock = emp.empType === "weekly_nonclock";
-
-      // Non-clock employees: always get full 7 days unless manually adjusted
-      if (isNonClock) {
-        const daily = emp.salary / 30;
-        const hourly = daily / 8;
-        const a = adj[emp.id] || {};
-        const faltasManual = +a.faltas || 0; // Manual absence days
-        const daysPaid = Math.max(0, 7 - (faltasManual * 2));
-        const baseSalary = daily * daysPaid;
-        const fuel=+a.fuel||0, vacation=+a.vacation||0, incapacity=+a.incapacity||0;
-        const advance=+a.advance||0, dec4=+a.dec4||0, dec3=+a.dec3||0, otherDed=+a.otherDed||0;
-        const applyIHSS = isLastWeekOfMonth(fs, ts);
-        const ihss = applyIHSS ? calcIHSS_monthly(emp.salary) : { em: 0, ivm: 0, total: 0 };
-        const applyRAP = isSecondWeekOfMonth(fs);
-        const rapData = applyRAP ? calcRAP_monthly(emp.salary) : { feo3: 0, fio3: 0, employeeTotal: 0, rl: 0 };
-        const rap = rapData.employeeTotal;
-        const totalEarned = baseSalary + fuel + vacation + incapacity + dec4 + dec3;
-        const totalDeductions = ihss.total + rap + advance + otherDed;
-        return {
-          employeeId: emp.id, name: emp.name, position: emp.position,
-          salary: emp.salary, daily, hourly, isNonClock: true,
-          daysWorked: workingDaysInPeriod - faltasManual, absences: faltasManual, daysPaid,
-          holidaysInPeriod: holidayDates.size, days: daysPaid,
-          effectiveHrs: 0, baseSalary,
-          ot: { 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0 }, otPay: 0,
-          ihssEM: ihss.em, ihssIVM: ihss.ivm, ihssTotal: ihss.total,
-          rap, rapFeo3: rapData.feo3, rapFio3: rapData.fio3, rapRL: rapData.rl,
-          fuel, vacation, incapacity, advance, dec4, dec3, otherDed,
-          totalEarned, totalDeductions, netPay: totalEarned - totalDeductions,
-        };
-      }
-
-      // Regular clock employees
-      let empEntries = (byEmp[emp.id] || []).map(e => {
-        // Auto-fill: if has checkIn but no checkOut, set scheduled exit time
-        // Mon-Thu = 6:00pm (18:00), Friday = 5:00pm (17:00)
-        if (e.checkIn && !e.checkOut) {
-          const dow = new Date(e.date + "T12:00:00").getDay();
-          if (dow >= 1 && dow <= 5) {
-            const exitTime = dow === 5 ? "17:00:00" : "18:00:00";
-            fridayAutoFills.push({ name: emp.name, date: e.date, time: dow === 5 ? "5:00pm" : "6:00pm" });
-            return { ...e, checkOut: `${e.date}T${exitTime}`, autoFilled: true };
-          }
-        }
-        return e;
-      });
-
-      // Count days with valid clock entries (Mon-Fri, excluding holidays and first Friday)
-      // Holidays are NOT required to have clock entries - they count as worked automatically
-      const clockedDays = empEntries.filter(e => {
-        if (!e.checkIn || !e.checkOut) return false;
-        const dow = new Date(e.date + "T12:00:00").getDay();
-        const isHoliday = holidayDates.has(e.date);
-        const isFirstFriday = e.date === fs && dow === 5;
-        return dow >= 1 && dow <= 5 && !isHoliday && !isFirstFriday;
-      }).length;
-
-      // Count holidays on weekdays directly here (bulletproof)
-      let empHolidayCount = 0;
-      {
-        const start = new Date(fs + "T12:00:00");
-        const end = new Date(ts + "T12:00:00");
-        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-          const dow = d.getDay();
-          const yyyy = d.getFullYear();
-          const mm = String(d.getMonth() + 1).padStart(2, "0");
-          const dd = String(d.getDate()).padStart(2, "0");
-          const dateStr = `${yyyy}-${mm}-${dd}`;
-          const isFirstFriday = dateStr === fs && dow === 5;
-          if (dow >= 1 && dow <= 5 && !isFirstFriday && holidayDates.has(dateStr)) empHolidayCount++;
-        }
-      }
-
-      // Total days worked = clocked days + holidays (holidays auto-count as worked)
-      const daysWorked = clockedDays + empHolidayCount;
-
-      // How many holidays fell in this period
-      const holidaysInPeriod = holidayDates.size;
-
-      // Pay logic
-      const absences = Math.max(0, workingDaysInPeriod - daysWorked);
-      const daysPaid = Math.max(0, 7 - (absences * 2));
-
-      console.log(`[${emp.name}] clocked=${clockedDays} holidays=${empHolidayCount} worked=${daysWorked} required=${workingDaysInPeriod} absences=${absences} paid=${daysPaid}`);
-
-      const daily = emp.salary / 30;
-      const hourly = daily / 8;
-      const baseSalary = daily * daysPaid;
-
-      // Overtime
-      let ot = { 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0 };
-      let totalEffective = 0;
-
-      empEntries.forEach(entry => {
-        if (!entry.checkIn || !entry.checkOut) return;
-        const dow = new Date(entry.checkIn).getDay();
-        const hrs = calcDayHours(entry);
-        totalEffective += hrs;
-
-        // Sunday or holiday → 100%
-        if (dow === 0 || holidayDates.has(entry.date)) {
-          ot[1.0] += hrs;
-          return;
-        }
-        // Saturday → 25%
-        if (dow === 6) {
-          ot[0.25] += hrs;
-          return;
-        }
-
-        // Overtime calculated by ACTUAL EXIT TIME, not total hours
-        // Scheduled exit: L-J = 18:00 (6pm), Viernes = 17:00 (5pm)
-        const scheduledExit = dow === 5 ? 17 : 18; // hour in 24h format
-        const cout = new Date(entry.checkOut);
-        const exitHour = cout.getHours() + cout.getMinutes() / 60;
-
-        // Grace: 10 min after scheduled exit = no OT
-        const graceExit = scheduledExit + 10/60;
-        if (exitHour <= graceExit) return; // No overtime
-
-        // OT starts from scheduled exit (not scheduled exit + grace)
-        const otMinutes = (exitHour - scheduledExit) * 60;
-        const otHours = otMinutes / 60;
-
-        // 6pm-7pm (18-19) = 25%, 7:01pm-9pm (19-21) = 50%, 9pm+ = 75%
-        if (exitHour <= 19) {
-          ot[0.25] += otHours;
-        } else if (exitHour <= 21) {
-          ot[0.25] += 1; // full hour 6-7pm
-          ot[0.5] += exitHour - 19; // from 7pm to exit
-        } else {
-          ot[0.25] += 1; // 6-7pm
-          ot[0.5] += 2; // 7-9pm
-          ot[0.75] += exitHour - 21; // 9pm+
-        }
-      });
-
-      const otPay = Object.entries(ot).reduce((sum, [rate, hrs]) => sum + hrs * hourly * (1 + parseFloat(rate)), 0);
-
-      const a = adj[emp.id] || {};
-      const fuel=+a.fuel||0, vacation=+a.vacation||0, incapacity=+a.incapacity||0;
-      const advance=+a.advance||0, dec4=+a.dec4||0, dec3=+a.dec3||0, otherDed=+a.otherDed||0;
-
-      // IHSS: only last week of the month (full monthly amount)
-      const applyIHSS = isLastWeekOfMonth(fs, ts);
-      const ihss = applyIHSS ? calcIHSS_monthly(emp.salary) : { em: 0, ivm: 0, total: 0 };
-
-      // RAP 1.5%: only second week of the month (full monthly amount)
-      const applyRAP = isSecondWeekOfMonth(fs);
-      const rapData = applyRAP ? calcRAP_monthly(emp.salary) : { feo3: 0, fio3: 0, employeeTotal: 0, rl: 0 };
-      const rap = rapData.employeeTotal; // Only employee portion is deducted
-
-      const totalEarned = baseSalary + otPay + fuel + vacation + incapacity + dec4 + dec3;
-      const totalDeductions = ihss.total + rap + advance + otherDed;
-
-      return {
-        employeeId: emp.id, name: emp.name, position: emp.position,
-        salary: emp.salary, daily, hourly,
-        daysWorked, absences, daysPaid, holidaysInPeriod,
-        days: daysPaid,
-        effectiveHrs: totalEffective, baseSalary,
-        ot, otPay,
-        ihssEM: ihss.em, ihssIVM: ihss.ivm, ihssTotal: ihss.total,
-        rap, rapFeo3: rapData.feo3, rapFio3: rapData.fio3, rapRL: rapData.rl,
-        fuel, vacation, incapacity, advance, dec4, dec3, otherDed,
-        totalEarned, totalDeductions, netPay: totalEarned - totalDeductions,
-      };
-    });
-
-    const applyIHSS = isLastWeekOfMonth(fs, ts);
-    const applyRAP = isSecondWeekOfMonth(fs);
-    setResult({ period: `WK${weekNum||"?"} ${from} al ${to}`, rows, from, to, weekNum, workingDaysInPeriod, holidaysInPeriod: holidayDates.size, holidayNames: Object.entries(holidayNames).map(([d,n])=>`${n} (${d})`), applyIHSS, applyRAP, fridayAutoFills });
+    setResult({period:`WK${weekNum||"?"} ${from} al ${to}`,rows,from,to,weekNum,workDays,holOnWD,applyIHSS,applyRAP,autoFills,holidayNames:Object.entries(holidayNames).map(([d,n])=>`${n} (${d})`)});
   };
 
-  const doSave=()=>{if(!result)return;setSaving(true);db.savePayroll(result);refresh();setSaving(false);alert("✅ Planilla guardada.")};
+  const doSave=async()=>{if(!result)return;setSaving(true);await db.savePayroll(result);await refresh();setSaving(false);alert("✅ Guardada.")};
   const updAdj=(eId,f,v)=>setAdj(p=>({...p,[eId]:{...(p[eId]||{}),[f]:v}}));
-  return (
-    <div>
-      <div style={S.pageHeader}><h2 style={S.title}>Generar Planilla</h2><div style={S.goldLine}/></div>
-      <div style={S.card}>
-        <h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📅</span> Período</h3>
-        <p style={{fontSize:12,color:"#64748b",marginBottom:12}}>Período de lectura: Viernes 5:00pm → Viernes siguiente 5:00pm. Selecciona las fechas de la semana laboral (Lunes a Viernes).</p>
-        <div style={S.formGrid}>
-          <Field label="Semana #" value={weekNum} onChange={setWeekNum} ph="3"/>
-          <Field label="Desde" value={from} onChange={setFrom} type="date"/>
-          <Field label="Hasta" value={to} onChange={setTo} type="date"/>
-          <div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar Planilla</button></div>
-        </div>
-      </div>
 
-      {result&&(<>
-        {/* Pay rules summary */}
-        <div style={{...S.card,background:"linear-gradient(135deg,#f0f3f8,#e8eef6)",border:"1px solid #d0daea"}}>
-          <div style={{display:"flex",gap:24,flexWrap:"wrap",fontSize:13,marginBottom:result.holidayNames?.length>0?10:0}}>
-            <div><span style={{color:"#64748b"}}>Días laborales:</span> <strong style={{color:"#0a2351"}}>{result.workingDaysInPeriod}</strong></div>
-            {result.holidaysInPeriod>0&&<div><span style={{color:"#64748b"}}>Feriados:</span> <strong style={{color:"#c9a227"}}>{result.holidaysInPeriod} (pagados)</strong></div>}
-            <div><span style={{color:"#64748b"}}>Regla:</span> <strong style={{color:"#0a6847"}}>{result.workingDaysInPeriod}d trabajados = 7d pagados</strong></div>
-            <div><span style={{color:"#64748b"}}>Falta:</span> <strong style={{color:"#b91c1c"}}>-2 días/ausencia</strong></div>
-            <div><span style={{color:"#64748b"}}>IHSS:</span> <strong style={{color:result.applyIHSS?"#7c3aed":"#94a3b8"}}>{result.applyIHSS?"✓ Aplica (última semana)":"No aplica esta semana"}</strong></div>
-            <div><span style={{color:"#64748b"}}>RAP 1.5%:</span> <strong style={{color:result.applyRAP?"#0369a1":"#94a3b8"}}>{result.applyRAP?"✓ Aplica (2da semana)":"No aplica esta semana"}</strong></div>
-          </div>
-          {result.holidayNames?.length>0&&(
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {result.holidayNames.map((h,i)=><span key={i} style={{padding:"3px 10px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e",fontWeight:600}}>🎌 {h}</span>)}
-            </div>
-          )}
-        </div>
+  return(<div>
+    <h2 style={S.title}>Generar Planilla</h2>
+    <div style={S.card}><h3 style={S.cardTitle}>📅 Período</h3><p style={{fontSize:12,color:"#64748b",marginBottom:10}}>Viernes 5pm → Viernes siguiente 5pm</p>
+      <div style={S.formGrid}><Field l="Semana #" v={weekNum} o={setWeekNum} ph="3"/><Field l="Desde" v={from} o={setFrom} t="date"/><Field l="Hasta" v={to} o={setTo} t="date"/><div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div></div></div>
+    {result&&<>
+      <div style={{...S.card,background:"#f0f3f8",border:"1px solid #d0daea"}}><div style={{display:"flex",gap:20,flexWrap:"wrap",fontSize:13}}>
+        <div>Lab: <strong>{result.workDays}</strong></div>{result.holOnWD>0&&<div>Feriados: <strong style={{color:"#c9a227"}}>{result.holOnWD}</strong></div>}<div>Regla: <strong style={{color:"#059669"}}>{result.workDays}d=7d</strong></div>
+        <div>IHSS: <strong style={{color:result.applyIHSS?"#7c3aed":"#94a3b8"}}>{result.applyIHSS?"✓ Aplica":"No"}</strong></div><div>RAP: <strong style={{color:result.applyRAP?"#0369a1":"#94a3b8"}}>{result.applyRAP?"✓ Aplica":"No"}</strong></div>
+      </div>{result.holidayNames?.length>0&&<div style={{marginTop:8,display:"flex",gap:6,flexWrap:"wrap"}}>{result.holidayNames.map((h,i)=><span key={i} style={{padding:"2px 8px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e"}}>🎌 {h}</span>)}</div>}</div>
+      {result.autoFills?.length>0&&<div style={{...S.card,background:"#fffbeb",border:"1px solid #fde68a"}}><h4 style={{fontSize:13,color:"#92400e",marginBottom:6}}>⚠️ Salida auto-completada</h4><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{result.autoFills.map((f,i)=><span key={i} style={{padding:"3px 10px",background:"#fff",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e"}}>{f.name} — {f.date} → {f.time}</span>)}</div></div>}
+      <div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>{result.period}</h3><div style={{display:"flex",gap:8}}><button style={S.btnGold} onClick={()=>printPayroll(result)}>🖨️</button><button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"...":"💾 Guardar"}</button></div></div>
+        <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Pos.","Sal.M.","Trab.","Faltas","Pago","Salario","Tot.OT","IHSS","RAP","Dev.","Ded.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
+          {result.rows.map(r=><tr key={r.employeeId} style={r.absences>0?{background:"#fffbeb"}:r.isNonClock?{background:"#f0f3f8"}:{}}>
+            <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td><td style={{...S.td,fontWeight:600,whiteSpace:"nowrap",fontSize:12,color:"#0a2351"}}>{r.name}{r.isNonClock&&<span style={{fontSize:9,color:"#1d4ed8",background:"#eff6ff",padding:"1px 4px",borderRadius:3,marginLeft:3}}>SR</span>}</td>
+            <td style={{...S.td,fontSize:11}}>{r.position}</td><td style={S.tdM}>{formatL(r.salary)}</td>
+            <td style={{...S.tdM,fontWeight:700,color:"#059669"}}>{r.isNonClock?"—":`${r.daysWorked}d`}</td>
+            <td style={{...S.tdM,fontWeight:700,color:r.absences>0?"#dc2626":"#059669"}}>{r.absences>0?`${r.absences}d`:"—"}</td>
+            <td style={{...S.tdM,fontWeight:700,color:r.daysPaid<7?"#c9a227":"#0a2351"}}>{r.daysPaid}d</td>
+            <td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td>
+            <td style={{...S.tdM,color:r.otPay>0?"#b91c1c":"#d4d4d8"}}>{r.isNonClock?"N/A":formatL(r.otPay)}</td>
+            <td style={{...S.tdM,color:"#7c3aed"}}>{r.ihssTotal>0?formatL(r.ihssTotal):"—"}</td>
+            <td style={{...S.tdM,color:"#0369a1"}}>{r.rap>0?formatL(r.rap):"—"}</td>
+            <td style={{...S.tdM,fontWeight:600}}>{formatL(r.totalEarned)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td>
+            <td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:13}}>{formatL(r.netPay)}</td></tr>)}
+        </tbody><tfoot><tr style={{background:"#e8eef6"}}><td colSpan={7} style={{...S.td,fontWeight:700}}>TOTALES</td><td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.otPay,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#0369a1"}}>{formatL(result.rows.reduce((s,r)=>s+r.rap,0))}</td><td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.totalEarned,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:14}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td></tr></tfoot></table></div></div>
+      <div style={S.card}><h3 style={S.cardTitle}>⚙️ Ajustes</h3><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Empleado","Tipo","Faltas","Comb.","Vac.","Incap.","Adel.","Dec4","Dec3","Otras"].map((h,i)=><th key={i} style={S.th}>{h}</th>)}</tr></thead><tbody>
+        {weeklyEmps.map(emp=>{const a=adj[emp.id]||{};const isNC=emp.empType==="weekly_nonclock";return<tr key={emp.id} style={isNC?{background:"#f0f3f8"}:{}}><td style={{...S.td,fontWeight:600,fontSize:12,color:"#0a2351",whiteSpace:"nowrap"}}>{emp.name}</td><td style={{...S.td,fontSize:11}}>{isNC?<span style={{color:"#1d4ed8",fontSize:10}}>SR</span>:"Reloj"}</td><td style={S.td}>{isNC?<input style={{...S.input,width:50,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.faltas||""} onChange={e=>updAdj(emp.id,"faltas",e.target.value)} placeholder="0"/>:<span style={{color:"#94a3b8",fontSize:11}}>auto</span>}</td>
+        {["fuel","vacation","incapacity","advance","dec4","dec3","otherDed"].map(f=><td key={f} style={S.td}><input style={{...S.input,width:70,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0"/></td>)}</tr>})}
+      </tbody></table></div></div>
+    </>}
+  </div>);
+}
 
-        {/* Auto-fill warnings */}
-        {result.fridayAutoFills?.length > 0 && (
-          <div style={{...S.card, background:"#fffbeb", border:"1px solid #fde68a"}}>
-            <h4 style={{fontSize:13,fontWeight:700,color:"#92400e",marginBottom:8}}>⚠️ Salida auto-completada</h4>
-            <p style={{fontSize:12,color:"#a16207",marginBottom:8}}>Los siguientes empleados tenían marca de entrada pero no de salida. Se usó la hora de salida programada (L-J: 6:00pm, Viernes: 5:00pm). Verifica que sea correcto.</p>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {result.fridayAutoFills.map((f,i) => (
-                <span key={i} style={{padding:"4px 12px",background:"#fff",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e",fontWeight:600}}>{f.name} — {fmtDate(f.date+"T12:00:00")} → {f.time}</span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div style={S.card}>
-          <div style={S.titleRow}><h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📋</span> {result.period}</h3>
-            <div style={{display:"flex",gap:8}}>
-              <button style={S.btnGold} onClick={()=>printPayroll(result)}>🖨️ Imprimir</button>
-              <button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"Guardando...":"💾 Guardar"}</button>
-            </div>
-          </div>
-          <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Cód","Nombre","Pos.","Sal.M.","Trab.","Faltas","Pago","Salario","Tot.OT","IHSS","RAP","Devengado","Deducc.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
-          </tr></thead><tbody>
-            {result.rows.map(r=><tr key={r.employeeId} style={r.absences>0?{background:"#fffbeb"}:r.isNonClock?{background:"#f0f3f8"}:{}}>
-              <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td>
-              <td style={{...S.td,fontWeight:600,whiteSpace:"nowrap",fontSize:12,color:"#0a2351"}}>{r.name} {r.isNonClock&&<span style={{fontSize:9,color:"#1d4ed8",background:"#eff6ff",padding:"1px 5px",borderRadius:3,marginLeft:4}}>SIN RELOJ</span>}</td>
-              <td style={{...S.td,fontSize:11}}>{r.position}</td>
-              <td style={S.tdM}>{formatL(r.salary)}</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#0a6847"}}>{r.isNonClock?"—":`${r.daysWorked}d`}</td>
-              <td style={{...S.tdM,fontWeight:700,color:r.absences>0?"#dc2626":"#0a6847"}}>{r.absences>0?`${r.absences}d`:"—"}</td>
-              <td style={{...S.tdM,fontWeight:700,color:r.daysPaid<7?"#c9a227":"#0a2351"}}>{r.daysPaid}d</td>
-              <td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td>
-              <td style={{...S.tdM,fontWeight:700,color:r.otPay>0?"#b91c1c":"#d4d4d8"}}>{r.isNonClock?"N/A":formatL(r.otPay)}</td>
-              <td style={{...S.tdM,color:"#7c3aed",fontSize:11}}>{r.ihssTotal>0?formatL(r.ihssTotal):"—"}</td>
-              <td style={{...S.tdM,color:"#0369a1",fontSize:11}} title={r.rap>0?`FEO3: ${formatL(r.rapFeo3)} + FIO3: ${formatL(r.rapFio3)}\nRL patrono: ${formatL(r.rapRL)}`:""}>
-                {r.rap>0?formatL(r.rap):"—"}
-              </td>
-              <td style={{...S.tdM,fontWeight:600}}>{formatL(r.totalEarned)}</td>
-              <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:13}}>{formatL(r.netPay)}</td>
-            </tr>)}
-          </tbody><tfoot><tr style={{background:"#e8eef6"}}>
-            <td colSpan={7} style={{...S.td,fontWeight:700,color:"#0a2351",textTransform:"uppercase",fontSize:11,letterSpacing:"0.05em"}}>Totales</td>
-            <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td>
-            <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.otPay,0))}</td>
-            <td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td>
-            <td style={{...S.tdM,fontWeight:700,color:"#0369a1"}}>{formatL(result.rows.reduce((s,r)=>s+r.rap,0))}</td>
-            <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalEarned,0))}</td>
-            <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td>
-            <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:15}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td>
-          </tr></tfoot></table></div>
-        </div>
-        <div style={S.card}>
-          <h3 style={S.cardTitle}><span style={S.cardTitleIcon}>⚙️</span> Ajustes por Empleado</h3>
-          <p style={{fontSize:12,color:"#64748b",marginBottom:10}}>Ingresa los montos y genera de nuevo la planilla para que se recalcule.</p>
-          <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Empleado","Tipo","Faltas","Combustible","Vacaciones","Incapacidad","Adelanto","Dec. 4to","Dec. 3ro","Otras Ded."].map((h,i)=><th key={i} style={S.th}>{h}</th>)}
-          </tr></thead><tbody>
-            {weeklyEmps.map(emp=>{const a=adj[emp.id]||{};const isNC=emp.empType==="weekly_nonclock";return(<tr key={emp.id} style={isNC?{background:"#f0f3f8"}:{}}>
-              <td style={{...S.td,fontWeight:600,fontSize:12,whiteSpace:"nowrap",color:"#0a2351"}}>{emp.name}</td>
-              <td style={{...S.td,fontSize:11}}>{isNC?<span style={{padding:"2px 8px",background:"#eff6ff",color:"#1d4ed8",borderRadius:4,fontSize:10,fontWeight:600}}>Sin Reloj</span>:<span style={{fontSize:10,color:"#64748b"}}>Reloj</span>}</td>
-              <td style={S.td}>{isNC?<input style={{...S.input,width:60,padding:"5px 8px",fontSize:12,textAlign:"right"}} type="number" value={a.faltas||""} onChange={e=>updAdj(emp.id,"faltas",e.target.value)} placeholder="0"/>:<span style={{color:"#94a3b8",fontSize:11}}>auto</span>}</td>
-            {["fuel","vacation","incapacity","advance","dec4","dec3","otherDed"].map(f=><td key={f} style={S.td}><input style={{...S.input,width:85,padding:"5px 8px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0.00"/></td>)}</tr>)})}
-          </tbody></table></div>
-        </div>
-      </>)}
-    </div>
-  );
+// ═══ CONFIDENTIAL ═══
+function ConfidentialTab({employees,refresh}){
+  const conf=employees.filter(e=>e.empType==="biweekly");
+  const[modal,setModal]=useState(null);const[form,setForm]=useState({id:"",name:"",position:"",salary:""});const[saving,setSaving]=useState(false);
+  const[from,setFrom]=useState("");const[to,setTo]=useState("");const[result,setResult]=useState(null);const[adj,setAdj]=useState({});const[paySaving,setPaySaving]=useState(false);
+  const openAdd=()=>{setForm({id:"",name:"",position:"",salary:""});setModal("new")};
+  const openEdit=e=>{setForm({...e,salary:String(e.salary)});setModal(e.id)};
+  const doSave=async()=>{const emp={...form,salary:parseFloat(form.salary)||0,empType:"biweekly"};if(!emp.id||!emp.name)return;setSaving(true);await db.upsertEmployee(emp);await refresh();setSaving(false);setModal(null)};
+  const doDelete=async id=>{if(confirm("¿Eliminar?")){await db.deleteEmployee(id);await refresh()}};
+  const generate=()=>{if(!from||!to)return;const rows=conf.map(emp=>{const bw=emp.salary/2;const ihss=calcIHSS_biweekly(emp.salary);const a=adj[emp.id]||{};const adv=+a.advance||0,other=+a.otherDed||0;const te=bw;const td=ihss.total+adv+other;return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,baseSalary:bw,ihssEM:ihss.em,ihssIVM:ihss.ivm,ihssTotal:ihss.total,advance:adv,otherDed:other,totalEarned:te,totalDeductions:td,netPay:te-td,ot:{0.25:0,0.5:0,0.75:0,1.0:0},otPay:0,daily:emp.salary/30,hourly:emp.salary/30/8,days:15,effectiveHrs:0,fuel:0,vacation:0,incapacity:0,dec4:0,dec3:0,rap:0}});setResult({period:`Q ${from} al ${to}`,rows,from,to})};
+  const doSaveP=async()=>{if(!result)return;setPaySaving(true);/* Save biweekly payroll to regular payrolls table */await db.savePayroll(result);await refresh();setPaySaving(false);alert("✅ Guardada.")};
+  const updAdj=(id,f,v)=>setAdj(p=>({...p,[id]:{...(p[id]||{}),[f]:v}}));
+  return(<div>
+    <h2 style={S.title}>Planilla Confidencial (Quincenal)</h2>
+    <div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>🔒 Empleados Confidenciales</h3><button style={S.btnPrimary} onClick={openAdd}>+ Agregar</button></div>
+      {modal&&<div style={S.overlay}><div style={S.modal}><h3 style={{fontSize:18,fontWeight:700,marginBottom:16}}>{modal==="new"?"Nuevo":"Editar"}</h3>
+        <div style={S.formGrid}><Field l="Código" v={form.id} o={v=>setForm({...form,id:v})} dis={modal!=="new"}/><Field l="Nombre" v={form.name} o={v=>setForm({...form,name:v})}/><Field l="Posición" v={form.position} o={v=>setForm({...form,position:v})}/><Field l="Salario Mensual" v={form.salary} o={v=>setForm({...form,salary:v})} t="number"/></div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:20}}><button style={S.btnSec} onClick={()=>setModal(null)}>Cancelar</button><button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"...":"Guardar"}</button></div></div></div>}
+      {conf.length===0?<p style={{color:"#94a3b8"}}>No hay empleados confidenciales.</p>:<div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Posición","Sal.Mensual","Quincenal","IHSS/Q",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
+        {conf.map(e=>{const ihss=calcIHSS_biweekly(e.salary);return<tr key={e.id}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600}}>{e.name}</td><td style={S.td}>{e.position}</td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/2)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(ihss.total)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>})}
+      </tbody></table></div>}</div>
+    <div style={S.card}><h3 style={S.cardTitle}>📋 Generar Quincenal</h3><div style={S.formGrid}><Field l="Desde" v={from} o={setFrom} t="date"/><Field l="Hasta" v={to} o={setTo} t="date"/><div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div></div></div>
+    {result&&<div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>{result.period}</h3><div style={{display:"flex",gap:8}}><button style={S.btnGold} onClick={()=>printPayroll(result)}>🖨️</button><button style={S.btnPrimary} onClick={doSaveP} disabled={paySaving}>{paySaving?"...":"💾 Guardar"}</button></div></div>
+      <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Sal.M.","Quincenal","IHSS EM","IHSS IVM","Tot.IHSS","Adel.","Otras","Tot.Ded.","Neto"].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=2?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
+        {result.rows.map(r=><tr key={r.employeeId}><td style={S.td}><span style={S.badge}>{r.employeeId}</span></td><td style={{...S.td,fontWeight:600}}>{r.name}</td><td style={S.tdM}>{formatL(r.salary)}</td><td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssEM)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssIVM)}</td><td style={{...S.tdM,fontWeight:600,color:"#7c3aed"}}>{formatL(r.ihssTotal)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.advance)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.otherDed)}</td><td style={{...S.tdM,fontWeight:600,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:13}}>{formatL(r.netPay)}</td></tr>)}
+      </tbody><tfoot><tr style={{background:"#e8eef6"}}><td colSpan={3} style={{...S.td,fontWeight:700}}>TOTALES</td><td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td><td colSpan={2}></td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td><td colSpan={2}></td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:14}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td></tr></tfoot></table></div>
+      <div style={{marginTop:12}}><h4 style={{fontSize:13,fontWeight:700,color:"#475569",marginBottom:6}}>Ajustes</h4><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Empleado","Adelanto","Otras Ded."].map((h,i)=><th key={i} style={S.th}>{h}</th>)}</tr></thead><tbody>{conf.map(emp=>{const a=adj[emp.id]||{};return<tr key={emp.id}><td style={{...S.td,fontWeight:600,fontSize:12}}>{emp.name}</td>{["advance","otherDed"].map(f=><td key={f} style={S.td}><input style={{...S.input,width:90,padding:"4px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0"/></td>)}</tr>})}</tbody></table></div></div>
+    </div>}
+  </div>);
 }
 
 // ═══ HISTORY ═══
-function HistoryTab({ payrolls, refresh }) {
-  const [sel,setSel]=useState(null);const [rows,setRows]=useState(null);const [loadingRows,setLoadingRows]=useState(false);
-  const selectPayroll= i=>{setSel(i);setLoadingRows(true);setRows(payrolls[i].rows || []);setLoadingRows(false)};
-  const del= i=>{if(!confirm("¿Eliminar esta planilla del historial?"))return;db.deletePayroll(payrolls[i].period);refresh();setSel(null);setRows(null)};
-  return (
-    <div>
-      <div style={S.pageHeader}><h2 style={S.title}>Historial de Planillas</h2><div style={S.goldLine}/></div>
-      {payrolls.length===0?<div style={S.card}><p style={{color:"#94a3b8",fontStyle:"italic"}}>No hay planillas guardadas aún.</p></div>:(<>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:20}}>
-          {payrolls.map((p,i)=><button key={i} onClick={()=>selectPayroll(i)} style={sel===i?{...S.btnPrimary,boxShadow:"0 4px 12px rgba(10,35,81,0.3)"}:S.btnSec}>{p.period}</button>)}
-        </div>
-        {loadingRows&&<div style={S.card}><p style={{color:"#64748b"}}>Cargando detalle de planilla...</p></div>}
-        {sel!==null&&rows&&!loadingRows&&(
-          <div style={S.card}>
-            <div style={S.titleRow}><h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📋</span> {payrolls[sel].period}</h3>
-              <div style={{display:"flex",gap:8}}>
-                <button style={S.btnGold} onClick={()=>printPayroll({period:payrolls[sel].period,rows})}>🖨️ Imprimir Planilla</button>
-                <button style={S.btnDanger} onClick={()=>del(sel)}>Eliminar</button>
-              </div>
-            </div>
-            <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-              {["Cód","Nombre","Posición","Días","Horas","Salario","H. Extra","Devengado","Deducciones","Neto a Pagar"].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3?"right":"left"}}>{h}</th>)}
-            </tr></thead><tbody>
-              {rows.map(r=><tr key={r.employeeId}><td style={S.td}><span style={S.badge}>{r.employeeId}</span></td><td style={{...S.td,fontWeight:600,color:"#0a2351"}}>{r.name}</td><td style={S.td}>{r.position}</td><td style={{...S.tdM,fontWeight:700}}>{r.days}</td><td style={S.tdM}>{r.effectiveHrs?.toFixed(1)||"—"}h</td><td style={S.tdM}>{formatL(r.baseSalary)}</td><td style={{...S.tdM,color:r.otPay>0?"#b91c1c":"#d4d4d8",fontWeight:r.otPay>0?700:400}}>{formatL(r.otPay)}</td><td style={{...S.tdM,fontWeight:600}}>{formatL(r.totalEarned)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td><td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:13}}>{formatL(r.netPay)}</td></tr>)}
-            </tbody><tfoot><tr style={{background:"#e8eef6"}}>
-              <td colSpan={5} style={{...S.td,fontWeight:700,color:"#0a2351",textTransform:"uppercase",fontSize:11}}>Totales</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(rows.reduce((s,r)=>s+r.baseSalary,0))}</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(rows.reduce((s,r)=>s+r.otPay,0))}</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#0a2351"}}>{formatL(rows.reduce((s,r)=>s+r.totalEarned,0))}</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(rows.reduce((s,r)=>s+r.totalDeductions,0))}</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:15}}>{formatL(rows.reduce((s,r)=>s+r.netPay,0))}</td>
-            </tr></tfoot></table></div>
-          </div>)}
-      </>)}
-    </div>
-  );
-}
-
-// ═══ CONFIDENTIAL (Biweekly Payroll) ═══
-function ConfidentialTab({ employees, refresh }) {
-  const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({ id:"",name:"",position:"",salary:"" });
-  const [saving, setSaving] = useState(false);
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [result, setResult] = useState(null);
-  const [adj, setAdj] = useState({});
-  const [paySaving, setPaySaving] = useState(false);
-
-  // Filter confidential employees (emp_type = 'biweekly')
-  const confEmployees = employees.filter(e => e.empType === "biweekly");
-
-  const openAdd=()=>{setForm({id:"",name:"",position:"",salary:""});setModal("new")};
-  const openEdit=(e)=>{setForm({...e,salary:String(e.salary)});setModal(e.id)};
-  const doSave=()=>{
-    const emp={...form,salary:parseFloat(form.salary)||0};
-    if(!emp.id||!emp.name)return;
-    setSaving(true);
-    db.upsertEmployee({...emp, empType:"biweekly"});
-    refresh();
-    setSaving(false);
-    setModal(null);
-  };
-  const doDelete=(id)=>{if(confirm("¿Eliminar?")) {{db.deleteEmployee(id);}refresh()}};
-
-  const generate = () => {
-    if (!from || !to) return alert("Selecciona las fechas de la quincena.");
-    const rows = confEmployees.map(emp => {
-      const biweeklySalary = emp.salary / 2; // Quincenal = mensual / 2
-      const ihss = calcIHSS_biweekly(emp.salary);
-      const a = adj[emp.id] || {};
-      const advance = +a.advance || 0, otherDed = +a.otherDed || 0;
-      const totalEarned = biweeklySalary;
-      const totalDeductions = ihss.total + advance + otherDed;
-      return {
-        employeeId: emp.id, name: emp.name, position: emp.position,
-        salary: emp.salary, baseSalary: biweeklySalary,
-        ihssEM: ihss.em, ihssIVM: ihss.ivm, ihssTotal: ihss.total,
-        advance, otherDed,
-        totalEarned, totalDeductions, netPay: totalEarned - totalDeductions,
-      };
-    });
-    setResult({ period: `Q ${from} al ${to}`, rows, from, to });
-  };
-
-  const doSavePayroll = () => {
-    if (!result) return;
-    setPaySaving(true);
-    db.savePayrollBiweekly(result);
-    refresh();
-    setPaySaving(false);
-    alert("✅ Planilla quincenal guardada.");
-  };
-
-  const updAdj=(eId,f,v)=>setAdj(p=>({...p,[eId]:{...(p[eId]||{}),[f]:v}}));
-
-  const printConf = () => {
-    if (!result) return;
-    const rows = result.rows;
-    const totals = { base: rows.reduce((s,r)=>s+r.baseSalary,0), ihss: rows.reduce((s,r)=>s+r.ihssTotal,0), earned: rows.reduce((s,r)=>s+r.totalEarned,0), ded: rows.reduce((s,r)=>s+r.totalDeductions,0), net: rows.reduce((s,r)=>s+r.netPay,0) };
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Planilla Quincenal ${result.period}</title><style>@page{size:landscape;margin:12mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9pt}.header{text-align:center;margin-bottom:12px}.header img{height:40px;margin-bottom:6px}.header h2{font-size:11pt;color:#1a3a6b}.header .period{font-size:10pt;margin-top:4px;font-weight:bold;color:#0a2351}table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#0a2351;color:#fff;padding:5px 4px;font-size:8pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:4px;border:1px solid #c8d6e5;font-size:8pt}.r{text-align:right;font-family:'Courier New',monospace}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351}.net{color:#0a6847;font-weight:700}.signatures{margin-top:40px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:200px}.sig-line{border-top:1px solid #000;margin-top:50px;padding-top:4px;font-size:9pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.print-btn{padding:10px 24px;background:#0a2351;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;margin-right:8px}.close-btn{padding:10px 24px;background:#64748b;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer}</style></head><body><div class="no-print"><button class="print-btn" onclick="window.print()">🖨️ Imprimir</button><button class="close-btn" onclick="window.close()">✕ Cerrar</button></div><div class="header"><img src="${LOGO}" alt="Horeb"/><h2>Planilla Quincenal — Empleados Confidenciales</h2><div class="period">${result.period}</div></div><table><thead><tr><th>Cód.</th><th>Nombre</th><th>Posición</th><th>Sal.Mensual</th><th>Sal.Quincenal</th><th>IHSS EM</th><th>IHSS IVM</th><th>Total IHSS</th><th>Adelanto</th><th>Otras Ded.</th><th>Total Ded.</th><th>Neto</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td><td class="r">${fN(r.salary)}</td><td class="r">${fN(r.baseSalary)}</td><td class="r">${fN(r.ihssEM)}</td><td class="r">${fN(r.ihssIVM)}</td><td class="r">${fN(r.ihssTotal)}</td><td class="r">${fN(r.advance)}</td><td class="r">${fN(r.otherDed)}</td><td class="r">${fN(r.totalDeductions)}</td><td class="r net">${fN(r.netPay)}</td></tr>`).join("")}<tr class="total-row"><td colspan="4" style="text-align:right">TOTALES</td><td class="r">${fN(totals.base)}</td><td colspan="2"></td><td class="r">${fN(totals.ihss)}</td><td colspan="2"></td><td class="r">${fN(totals.ded)}</td><td class="r net">${fN(totals.net)}</td></tr></tbody></table><div class="signatures"><div class="sig-box"><div class="sig-line">Elaborado por</div></div><div class="sig-box"><div class="sig-line">Revisado por</div></div><div class="sig-box"><div class="sig-line">Autorizado por</div></div></div></body></html>`;
-    const w = window.open("","_blank"); if(w){w.document.write(html);w.document.close()}
-  };
-
-  return (
-    <div>
-      <div style={S.pageHeader}><h2 style={S.title}>Planilla Confidencial (Quincenal)</h2><div style={S.goldLine}/></div>
-
-      {/* Confidential Employees */}
-      <div style={S.card}>
-        <div style={S.titleRow}><h3 style={S.cardTitle}><span style={S.cardTitleIcon}>🔒</span> Empleados Confidenciales</h3><button style={S.btnPrimary} onClick={openAdd}>+ Agregar</button></div>
-        <p style={{fontSize:12,color:"#64748b",marginBottom:12}}>Empleados de confianza que no marcan reloj. Pago quincenal (salario mensual ÷ 2).</p>
-
-        {modal&&(<div style={S.overlay}><div style={S.modal}>
-          <h3 style={S.modalTitle}>{modal==="new"?"Nuevo Empleado Confidencial":"Editar"}</h3>
-          <div style={S.formGrid}>
-            <Field label="Código" value={form.id} onChange={v=>setForm({...form,id:v})} ph="C01" disabled={modal!=="new"}/>
-            <Field label="Nombre" value={form.name} onChange={v=>setForm({...form,name:v})} ph="Nombre completo"/>
-            <Field label="Posición" value={form.position} onChange={v=>setForm({...form,position:v})} ph="Gerente"/>
-            <Field label="Salario Mensual" value={form.salary} onChange={v=>setForm({...form,salary:v})} ph="0.00" type="number"/>
-          </div>
-          <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24}}>
-            <button style={S.btnSec} onClick={()=>setModal(null)}>Cancelar</button>
-            <button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"Guardando...":"Guardar"}</button>
-          </div>
-        </div></div>)}
-
-        {confEmployees.length===0?<p style={{color:"#94a3b8",fontStyle:"italic"}}>No hay empleados confidenciales registrados.</p>:(
-          <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Cód","Nombre","Posición","Sal. Mensual","Sal. Quincenal","IHSS/Quincena",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3?"right":"left"}}>{h}</th>)}
-          </tr></thead><tbody>
-            {confEmployees.map(e=>{const ihss=calcIHSS_biweekly(e.salary);return(
-              <tr key={e.id}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600,color:"#0a2351"}}>{e.name}</td><td style={S.td}><span style={S.posBadge}>{e.position}</span></td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/2)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(ihss.total)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626",borderColor:"#fecaca"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>
-            )})}
-          </tbody></table></div>
-        )}
-      </div>
-
-      {/* Generate Biweekly Payroll */}
-      <div style={S.card}>
-        <h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📋</span> Generar Planilla Quincenal</h3>
-        <div style={S.formGrid}>
-          <Field label="Desde" value={from} onChange={setFrom} type="date"/>
-          <Field label="Hasta" value={to} onChange={setTo} type="date"/>
-          <div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div>
-        </div>
-      </div>
-
-      {result&&(
-        <div style={S.card}>
-          <div style={S.titleRow}><h3 style={S.cardTitle}><span style={S.cardTitleIcon}>📋</span> {result.period}</h3>
-            <div style={{display:"flex",gap:8}}>
-              <button style={S.btnGold} onClick={printConf}>🖨️ Imprimir</button>
-              <button style={S.btnPrimary} onClick={doSavePayroll} disabled={paySaving}>{paySaving?"Guardando...":"💾 Guardar"}</button>
-            </div>
-          </div>
-          <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-            {["Cód","Nombre","Posición","Sal.Mensual","Quincenal","IHSS EM","IHSS IVM","Tot.IHSS","Adelanto","Otras Ded.","Tot.Ded.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}
-          </tr></thead><tbody>
-            {result.rows.map(r=><tr key={r.employeeId}>
-              <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td>
-              <td style={{...S.td,fontWeight:600,color:"#0a2351",whiteSpace:"nowrap"}}>{r.name}</td>
-              <td style={{...S.td,fontSize:11}}>{r.position}</td>
-              <td style={S.tdM}>{formatL(r.salary)}</td>
-              <td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td>
-              <td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssEM)}</td>
-              <td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssIVM)}</td>
-              <td style={{...S.tdM,fontWeight:600,color:"#7c3aed"}}>{formatL(r.ihssTotal)}</td>
-              <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.advance)}</td>
-              <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.otherDed)}</td>
-              <td style={{...S.tdM,fontWeight:600,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td>
-              <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:13}}>{formatL(r.netPay)}</td>
-            </tr>)}
-          </tbody><tfoot><tr style={{background:"#e8eef6"}}>
-            <td colSpan={4} style={{...S.td,fontWeight:700,color:"#0a2351",textTransform:"uppercase",fontSize:11}}>Totales</td>
-            <td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td>
-            <td colSpan={2}></td>
-            <td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td>
-            <td colSpan={2}></td>
-            <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td>
-            <td style={{...S.tdM,fontWeight:700,color:"#0a6847",fontSize:15}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td>
-          </tr></tfoot></table></div>
-
-          {/* Adjustments */}
-          <div style={{marginTop:16}}>
-            <h4 style={{fontSize:13,fontWeight:700,color:"#475569",marginBottom:8}}>Ajustes</h4>
-            <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
-              {["Empleado","Adelanto","Otras Ded."].map((h,i)=><th key={i} style={S.th}>{h}</th>)}
-            </tr></thead><tbody>
-              {confEmployees.map(emp=>{const a=adj[emp.id]||{};return(<tr key={emp.id}>
-                <td style={{...S.td,fontWeight:600,fontSize:12,color:"#0a2351"}}>{emp.name}</td>
-                {["advance","otherDed"].map(f=><td key={f} style={S.td}><input style={{...S.input,width:100,padding:"5px 8px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0.00"/></td>)}
-              </tr>)})}
-            </tbody></table></div>
-            <p style={{fontSize:11,color:"#64748b",marginTop:6}}>Ingresa ajustes y genera de nuevo para recalcular.</p>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+function HistoryTab({payrolls,refresh}){
+  const[sel,setSel]=useState(null);const[rows,setRows]=useState(null);const[loading,setLoading]=useState(false);
+  const select=async i=>{setSel(i);setLoading(true);const r=await db.getPayrollRows(payrolls[i].id);setRows(r);setLoading(false)};
+  const del=async i=>{if(!confirm("¿Eliminar?"))return;await db.deletePayroll(payrolls[i].id);await refresh();setSel(null);setRows(null)};
+  return(<div><h2 style={S.title}>Historial</h2>
+    {payrolls.length===0?<div style={S.card}><p style={{color:"#94a3b8"}}>No hay planillas.</p></div>:<>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>{payrolls.map((p,i)=><button key={i} onClick={()=>select(i)} style={sel===i?S.btnPrimary:S.btnSec}>{p.period}</button>)}</div>
+      {loading&&<div style={S.card}><p>Cargando...</p></div>}
+      {sel!==null&&rows&&!loading&&<div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>{payrolls[sel].period}</h3><div style={{display:"flex",gap:8}}><button style={S.btnGold} onClick={()=>printPayroll({period:payrolls[sel].period,rows})}>🖨️</button><button style={{...S.btnSec,color:"#dc2626"}} onClick={()=>del(sel)}>🗑️</button></div></div>
+        <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Días","Salario","H.Extra","IHSS","RAP","Dev.","Ded.","Neto"].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=2?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
+          {rows.map(r=><tr key={r.employeeId}><td style={S.td}><span style={S.badge}>{r.employeeId}</span></td><td style={{...S.td,fontWeight:600}}>{r.name}</td><td style={S.tdM}>{r.days}</td><td style={S.tdM}>{formatL(r.baseSalary)}</td><td style={{...S.tdM,color:r.otPay>0?"#b91c1c":"#d4d4d8"}}>{formatL(r.otPay)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssTotal)}</td><td style={{...S.tdM,color:"#0369a1"}}>{formatL(r.rap)}</td><td style={S.tdM}>{formatL(r.totalEarned)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td><td style={{...S.tdM,fontWeight:700,color:"#059669"}}>{formatL(r.netPay)}</td></tr>)}
+        </tbody><tfoot><tr style={{background:"#e8eef6"}}><td colSpan={3} style={{...S.td,fontWeight:700}}>TOTALES</td><td style={{...S.tdM,fontWeight:700}}>{formatL(rows.reduce((s,r)=>s+r.baseSalary,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(rows.reduce((s,r)=>s+r.otPay,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(rows.reduce((s,r)=>s+r.ihssTotal,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#0369a1"}}>{formatL(rows.reduce((s,r)=>s+r.rap,0))}</td><td style={{...S.tdM,fontWeight:700}}>{formatL(rows.reduce((s,r)=>s+r.totalEarned,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(rows.reduce((s,r)=>s+r.totalDeductions,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:14}}>{formatL(rows.reduce((s,r)=>s+r.netPay,0))}</td></tr></tfoot></table></div></div>}
+    </>}
+  </div>);
 }
 
 // ═══ SHARED ═══
-function Field({label,value,onChange,ph,type="text",options,disabled}){return(
-  <div style={{display:"flex",flexDirection:"column",gap:5}}>
-    <label style={S.label}>{label}</label>
-    {type==="select"?<select style={S.input} value={value} onChange={e=>onChange(e.target.value)}>{options.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}</select>
-    :<input style={S.input} type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={ph} disabled={disabled}/>}
-  </div>
-)}
+function Field({l,v,o,ph,t="text",opts,dis}){return<div style={{display:"flex",flexDirection:"column",gap:4}}><label style={S.label}>{l}</label>{t==="select"?<select style={S.input} value={v} onChange={e=>o(e.target.value)}>{opts.map(x=><option key={x.v} value={x.v}>{x.l}</option>)}</select>:<input style={S.input} type={t} value={v} onChange={e=>o(e.target.value)} placeholder={ph} disabled={dis}/>}</div>}
 
 // ═══ STYLES ═══
-const S = {
-  app: { fontFamily:"'Source Sans 3','Segoe UI',sans-serif",background:"#f0f3f8",minHeight:"100vh",color:"#1e293b" },
-  // Header
-  header: { background:"linear-gradient(135deg,#0a2351 0%,#0d2d6b 100%)",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12,borderBottom:"3px solid #c9a227",position:"sticky",top:0,zIndex:100,minHeight:60 },
-  brand: { display:"flex",alignItems:"center",gap:12 },
-  logoImg: { height:36,borderRadius:4,objectFit:"contain" },
-  brandDivider: { width:1,height:28,background:"rgba(255,255,255,0.15)" },
-  brandSub: { color:"rgba(255,255,255,0.6)",fontSize:12,fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:"'Cormorant Garamond',Georgia,serif" },
-  nav: { display:"flex",gap:3,flexWrap:"wrap" },
-  navBtn: { display:"flex",alignItems:"center",gap:6,padding:"10px 14px",border:"none",borderRadius:6,background:"transparent",color:"rgba(255,255,255,0.55)",cursor:"pointer",fontSize:13,fontWeight:500,fontFamily:"inherit",letterSpacing:"0.02em" },
-  navAct: { background:"rgba(201,162,39,0.15)",color:"#c9a227",fontWeight:700 },
-  // Main
-  main: { maxWidth:1320,margin:"0 auto",padding:"28px 20px 40px" },
-  footer: { textAlign:"center",padding:"20px",fontSize:12,color:"#64748b",borderTop:"1px solid #e2e8f0",display:"flex",justifyContent:"center",gap:20 },
-  // Typography
-  pageHeader: { marginBottom:24 },
-  title: { fontSize:26,fontWeight:700,color:"#0a2351",letterSpacing:"-0.02em",fontFamily:"'Cormorant Garamond','Source Sans 3',serif",marginBottom:6 },
-  goldLine: { width:48,height:3,background:"linear-gradient(90deg,#c9a227,#e8d48b)",borderRadius:2 },
-  // Cards
-  grid4: { display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:16,marginBottom:24 },
-  card: { background:"#fff",borderRadius:14,padding:22,boxShadow:"0 1px 4px rgba(10,35,81,0.06),0 0 0 1px rgba(10,35,81,0.04)",marginBottom:20 },
-  cardTitle: { fontSize:15,fontWeight:700,marginBottom:14,color:"#0a2351",display:"flex",alignItems:"center",gap:8 },
-  cardTitleIcon: { fontSize:18 },
-  titleRow: { display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:14 },
-  // Schedule
-  schedCard: { padding:"12px 14px",borderRadius:10,background:"linear-gradient(135deg,#f0f3f8,#e8eef6)",border:"1px solid #d0daea",textAlign:"center" },
-  schedDay: { fontSize:13,fontWeight:700,color:"#0a2351",marginBottom:4 },
-  schedTime: { fontSize:12,color:"#475569",fontWeight:500 },
-  schedHrs: { fontSize:11,color:"#64748b",marginTop:2 },
-  schedNote: { fontSize:12,color:"#64748b",marginTop:12,fontStyle:"italic" },
-  summRow: { display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:15 },
-  // Table
-  table: { width:"100%",borderCollapse:"separate",borderSpacing:0,fontSize:13 },
-  th: { padding:"10px 12px",textAlign:"left",fontWeight:700,fontSize:10,color:"#64748b",borderBottom:"2px solid #d0daea",whiteSpace:"nowrap",textTransform:"uppercase",letterSpacing:"0.06em",background:"#f8fafc" },
-  td: { padding:"10px 12px",borderBottom:"1px solid #eef2f7",whiteSpace:"nowrap",fontSize:13 },
-  tdM: { padding:"10px 12px",borderBottom:"1px solid #eef2f7",whiteSpace:"nowrap",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:12 },
-  // Badges
-  badge: { background:"#e8eef6",color:"#0a2351",padding:"3px 10px",borderRadius:6,fontWeight:700,fontSize:11,fontFamily:"'JetBrains Mono',monospace" },
-  posBadge: { background:"#f0fdf4",color:"#0a6847",padding:"3px 10px",borderRadius:6,fontSize:12,fontWeight:500,border:"1px solid #bbf7d0" },
-  // Buttons
-  btnPrimary: { padding:"10px 20px",background:"linear-gradient(135deg,#0a2351,#163a72)",color:"#fff",border:"none",borderRadius:8,fontWeight:600,cursor:"pointer",fontSize:13,fontFamily:"inherit",whiteSpace:"nowrap",letterSpacing:"0.02em",boxShadow:"0 2px 8px rgba(10,35,81,0.2)" },
-  btnSec: { padding:"10px 20px",background:"#fff",color:"#0a2351",border:"1px solid #d0daea",borderRadius:8,fontWeight:600,cursor:"pointer",fontSize:13,fontFamily:"inherit",whiteSpace:"nowrap" },
-  btnGold: { padding:"10px 20px",background:"linear-gradient(135deg,#c9a227,#dbb84a)",color:"#fff",border:"none",borderRadius:8,fontWeight:700,cursor:"pointer",fontSize:13,fontFamily:"inherit",whiteSpace:"nowrap",boxShadow:"0 2px 8px rgba(201,162,39,0.3)",letterSpacing:"0.02em" },
-  btnDanger: { padding:"10px 20px",background:"#fff",color:"#dc2626",border:"1px solid #fecaca",borderRadius:8,fontWeight:600,cursor:"pointer",fontSize:13,fontFamily:"inherit",whiteSpace:"nowrap" },
-  tblBtn: { padding:"4px 12px",background:"#fff",color:"#0a2351",border:"1px solid #d0daea",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginRight:4 },
-  iconBtn: { background:"none",border:"none",cursor:"pointer",padding:4,fontSize:15,opacity:0.7 },
-  fileLabel: { display:"inline-flex",alignItems:"center",gap:8,padding:"12px 22px",background:"linear-gradient(135deg,#e8eef6,#f0f3f8)",color:"#0a2351",borderRadius:10,fontWeight:600,fontSize:13,cursor:"pointer",border:"2px dashed #b0c4de",fontFamily:"inherit",letterSpacing:"0.02em" },
-  // Forms
-  formGrid: { display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12 },
-  label: { fontSize:11,fontWeight:700,color:"#475569",textTransform:"uppercase",letterSpacing:"0.06em" },
-  input: { padding:"9px 12px",border:"1px solid #d0daea",borderRadius:8,fontSize:13,color:"#1e293b",background:"#fff",width:"100%",boxSizing:"border-box",fontFamily:"inherit" },
-  // Modal
-  overlay: { position:"fixed",inset:0,background:"rgba(10,35,81,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999,padding:16,backdropFilter:"blur(4px)" },
-  modal: { background:"#fff",borderRadius:18,padding:28,width:"100%",maxWidth:500,boxShadow:"0 24px 64px rgba(10,35,81,0.25)" },
-  modalTitle: { fontSize:20,fontWeight:700,marginBottom:20,color:"#0a2351",fontFamily:"'Cormorant Garamond',serif",borderBottom:"2px solid #c9a227",paddingBottom:10,display:"inline-block" },
+const CSS=`@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap');@keyframes spin{to{transform:rotate(360deg)}}input:focus,select:focus{border-color:#1a5ab8!important;box-shadow:0 0 0 3px rgba(26,90,184,0.1)!important;outline:none}button{transition:all 0.15s}button:hover{filter:brightness(1.05)}tr:hover td{background:rgba(10,35,81,0.02)!important}*{box-sizing:border-box;margin:0;padding:0}::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:#b0bec5;border-radius:3px}`;
+
+const S={
+  app:{fontFamily:"'Source Sans 3',sans-serif",background:"#f1f5f9",minHeight:"100vh",color:"#1e293b"},
+  loading:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"linear-gradient(135deg,#0a2351,#1a4a8a)"},
+  spinner:{width:36,height:36,border:"3px solid rgba(255,255,255,0.2)",borderTopColor:"#c9a227",borderRadius:"50%",animation:"spin 0.8s linear infinite"},
+  header:{background:"linear-gradient(135deg,#0a2351,#0d2d6b)",padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12,borderBottom:"3px solid #c9a227",position:"sticky",top:0,zIndex:100,minHeight:56},
+  brand:{display:"flex",alignItems:"center",gap:10},logoImg:{height:32,borderRadius:4},brandDivider:{width:1,height:24,background:"rgba(255,255,255,0.15)"},brandSub:{color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.08em",textTransform:"uppercase"},
+  nav:{display:"flex",gap:2,flexWrap:"wrap"},navBtn:{display:"flex",alignItems:"center",gap:5,padding:"8px 12px",border:"none",borderRadius:6,background:"transparent",color:"rgba(255,255,255,0.5)",cursor:"pointer",fontSize:13,fontWeight:500,fontFamily:"inherit"},navAct:{background:"rgba(201,162,39,0.15)",color:"#c9a227",fontWeight:700},
+  main:{maxWidth:1300,margin:"0 auto",padding:"20px 16px 40px"},footer:{textAlign:"center",padding:"16px",fontSize:12,color:"#64748b",borderTop:"1px solid #e2e8f0",display:"flex",justifyContent:"center",gap:20},
+  title:{fontSize:22,fontWeight:700,marginBottom:16,color:"#0a2351"},titleRow:{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:12},
+  grid4:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:20},
+  card:{background:"#fff",borderRadius:12,padding:18,boxShadow:"0 1px 3px rgba(0,0,0,0.05)",border:"1px solid #e2e8f0",marginBottom:16},cardTitle:{fontSize:15,fontWeight:700,marginBottom:10,color:"#334155"},
+  table:{width:"100%",borderCollapse:"collapse",fontSize:13},th:{padding:"8px 10px",textAlign:"left",fontWeight:600,fontSize:11,color:"#64748b",borderBottom:"2px solid #d0daea",whiteSpace:"nowrap",textTransform:"uppercase",letterSpacing:"0.04em",background:"#f8fafc"},
+  td:{padding:"8px 10px",borderBottom:"1px solid #eef2f7",whiteSpace:"nowrap",fontSize:13},tdM:{padding:"8px 10px",borderBottom:"1px solid #eef2f7",whiteSpace:"nowrap",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:12},
+  badge:{background:"#e8eef6",color:"#0a2351",padding:"2px 8px",borderRadius:6,fontWeight:700,fontSize:11,fontFamily:"monospace"},posBadge:{background:"#f0fdf4",color:"#059669",padding:"2px 8px",borderRadius:6,fontSize:12},
+  btnPrimary:{padding:"9px 16px",background:"linear-gradient(135deg,#0a2351,#163a72)",color:"#fff",border:"none",borderRadius:8,fontWeight:600,cursor:"pointer",fontSize:13,fontFamily:"inherit",whiteSpace:"nowrap",boxShadow:"0 2px 6px rgba(10,35,81,0.2)"},
+  btnSec:{padding:"9px 16px",background:"#fff",color:"#0a2351",border:"1px solid #d0daea",borderRadius:8,fontWeight:600,cursor:"pointer",fontSize:13,fontFamily:"inherit",whiteSpace:"nowrap"},
+  btnGold:{padding:"9px 16px",background:"linear-gradient(135deg,#c9a227,#dbb84a)",color:"#fff",border:"none",borderRadius:8,fontWeight:700,cursor:"pointer",fontSize:13,fontFamily:"inherit",whiteSpace:"nowrap",boxShadow:"0 2px 6px rgba(201,162,39,0.3)"},
+  tblBtn:{padding:"3px 10px",background:"#fff",color:"#0a2351",border:"1px solid #d0daea",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginRight:3},
+  fileLabel:{display:"inline-flex",alignItems:"center",gap:6,padding:"10px 18px",background:"#eff6ff",color:"#0a2351",borderRadius:8,fontWeight:600,fontSize:13,cursor:"pointer",border:"2px dashed #93c5fd",fontFamily:"inherit"},
+  formGrid:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10},
+  label:{fontSize:11,fontWeight:700,color:"#475569",textTransform:"uppercase",letterSpacing:"0.04em"},
+  input:{padding:"8px 10px",border:"1px solid #d0daea",borderRadius:8,fontSize:13,color:"#1e293b",background:"#fff",width:"100%",boxSizing:"border-box",fontFamily:"inherit"},
+  overlay:{position:"fixed",inset:0,background:"rgba(10,35,81,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999,padding:16,backdropFilter:"blur(4px)"},
+  modal:{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:480,boxShadow:"0 20px 60px rgba(10,35,81,0.25)"},
 };
