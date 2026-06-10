@@ -441,7 +441,7 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       }
       // Clock employees
       let empEntries=(byEmp[emp.id]||[]).map(e=>{
-        if(e.checkIn&&!e.checkOut){const dow=new Date(e.date+"T12:00:00").getDay();if(dow>=1&&dow<=5){const t=dow===5?"17:00:00":"18:00:00";autoFills.push({name:emp.name,date:e.date,time:dow===5?"5pm":"6pm"});return{...e,checkOut:`${e.date}T${t}`}}}return e});
+        if(e.checkIn&&!e.checkOut){const dow=new Date(e.date+"T12:00:00").getDay();if(dow>=1&&dow<=5){const t=dow===5?"17:00:00":"18:00:00";autoFills.push({name:emp.name,date:e.date,time:dow===5?"5pm":"6pm"});return{...e,checkOut:`${e.date}T${t}`,autoFilled:true}}}return e});
 
       const clockedDays=empEntries.filter(e=>{if(!e.checkIn||!e.checkOut)return false;const dow=new Date(e.date+"T12:00:00").getDay();return dow>=1&&dow<=5&&!holidayDates.has(e.date)&&!(e.date===fs&&dow===5)}).length;
       const daysWorked=clockedDays+holOnWD;
