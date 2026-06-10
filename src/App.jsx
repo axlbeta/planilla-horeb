@@ -448,14 +448,19 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       const absences=Math.max(0,workDays-daysWorked);const daysPaid=Math.max(0,7-(absences*2));
       const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
 
-      // OT by exit time
+      // OT: extra = total effective - scheduled hours. Exit time determines RATE.
       let ot={0.25:0,0.5:0,0.75:0,1.0:0},totalEff=0;
       empEntries.forEach(en=>{if(!en.checkIn||!en.checkOut)return;const dow=new Date(en.checkIn).getDay();const hrs=calcDayHours(en);totalEff+=hrs;
         if(dow===0||holidayDates.has(en.date)){ot[1.0]+=hrs;return}
         if(dow===6){ot[0.25]+=hrs;return}
-        const schedExit=dow===5?17:18;const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
-        if(cH<=schedExit+10/60)return;const otH=cH-schedExit;
-        if(cH<=19)ot[0.25]+=otH;else if(cH<=21){ot[0.25]+=1;ot[0.5]+=cH-19}else{ot[0.25]+=1;ot[0.5]+=2;ot[0.75]+=cH-21}});
+        const scheduled=getScheduledHours(dow);
+        const extra=hrs-scheduled;
+        if(extra<=0)return;
+        // Exit time determines rate bracket
+        const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
+        if(cH<=19){ot[0.25]+=extra}
+        else if(cH<=21){ot[0.25]+=Math.min(extra,1);if(extra>1)ot[0.5]+=extra-1}
+        else{ot[0.25]+=Math.min(extra,1);const r=Math.max(0,extra-1);ot[0.5]+=Math.min(r,2);if(r>2)ot[0.75]+=r-2}});
       const otPay=Object.entries(ot).reduce((s,[r,h])=>s+h*hourly*(1+parseFloat(r)),0);
 
       const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{total:0};
