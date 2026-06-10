@@ -475,8 +475,8 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
         const dow=new Date(en.checkIn).getDay();
         const hrs=calcDayHours(en);
         totalEff+=hrs;
-        // Auto-filled: deficit/compensation only, NO OT (unknown real exit)
-        if(en.autoFilled){
+        // Auto-filled: deficit/compensation only, NO OT (except last Friday which has its own handler)
+        if(en.autoFilled&&!(en.date===ts&&dow===5)){
           if(dow>=1&&dow<=5){
             const scheduled=getScheduledHours(dow);
             const rawDiff=hrs-scheduled;
@@ -493,12 +493,24 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
           if(cH>17){ot[0.25]+=(cH-17-EXIT_GRACE>0?cH-17-EXIT_GRACE:0)}
           return;
         }
-        // Last Friday: deficit/compensation only, NO OT buckets
+        // Last Friday: OT from hours before 5pm only (after 5pm → next period)
         if(en.date===ts&&dow===5){
+          // Cap exit at 5pm for this period's calculation
+          const cout5=new Date(en.date+"T17:00:00");
+          const realCout=new Date(en.checkOut);
+          const useCout=realCout>cout5?cout5:realCout;
+          let cin=new Date(en.checkIn);
+          const am8=new Date(cin);am8.setHours(8,0,0,0);const am750=new Date(cin);am750.setHours(7,50,0,0);
+          if(cin>=am750&&cin<am8)cin=am8;
+          let ms=useCout-cin;
+          if(en.lunchOut&&en.lunchIn)ms-=(new Date(en.lunchIn)-new Date(en.lunchOut));
+          else if(en.lunchOut)ms-=3600000;
+          else if(ms>5*3600000)ms-=3600000;
+          const cappedHrs=Math.max(0,ms/3600000);
           const scheduled=getScheduledHours(dow);
-          const rawDiff=hrs-scheduled;
-          if(rawDiff<0) weeklyDeficit+=Math.abs(rawDiff);
-          else weeklyCompensation+=rawDiff;
+          const rawDiff=cappedHrs-scheduled;
+          if(rawDiff<0){weeklyDeficit+=Math.abs(rawDiff)}
+          else if(rawDiff>0){const extra=rawDiff-EXIT_GRACE;if(extra>0)ot[0.25]+=extra}
           return;
         }
         // Mon-Thu
