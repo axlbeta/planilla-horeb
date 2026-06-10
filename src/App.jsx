@@ -449,16 +449,28 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
 
       // OT: extra = total effective - scheduled hours. Exit time determines RATE.
-      // Skip OT for auto-filled entries (unknown real exit time)
+      // First Friday: only count hours AFTER 5pm (exit-time based, not total hours)
+      // Auto-filled entries: skip OT (unknown real exit)
       let ot={0.25:0,0.5:0,0.75:0,1.0:0},totalEff=0;
       empEntries.forEach(en=>{if(!en.checkIn||!en.checkOut)return;const dow=new Date(en.checkIn).getDay();const hrs=calcDayHours(en);totalEff+=hrs;
-        if(en.autoFilled)return; // Don't calculate OT for auto-filled exits
+        if(en.autoFilled)return;
         if(dow===0||holidayDates.has(en.date)){ot[1.0]+=hrs;return}
         if(dow===6){ot[0.25]+=hrs;return}
+        
+        // First Friday: only OT after 5pm
+        const isFirstFri=en.date===fs&&dow===5;
+        if(isFirstFri){
+          const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
+          if(cH<=17)return; // No OT if left at or before 5pm
+          const otH=cH-17; // Only hours after 5pm
+          ot[0.25]+=otH; // Friday OT at 25%
+          return;
+        }
+        
+        // Mon-Thu + last Friday: total effective hours vs scheduled
         const scheduled=getScheduledHours(dow);
         const extra=hrs-scheduled;
         if(extra<=0)return;
-        // Exit time determines rate bracket
         const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
         if(cH<=19){ot[0.25]+=extra}
         else if(cH<=21){ot[0.25]+=Math.min(extra,1);if(extra>1)ot[0.5]+=extra-1}
