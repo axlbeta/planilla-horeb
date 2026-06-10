@@ -441,44 +441,60 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       }
       // Clock employees
       let empEntries=(byEmp[emp.id]||[]).map(e=>{
-        if(e.checkIn&&!e.checkOut){const dow=new Date(e.date+"T12:00:00").getDay();if(dow>=1&&dow<=5){const t=dow===5?"17:00:00":"18:00:00";autoFills.push({name:emp.name,date:e.date,time:dow===5?"5pm":"6pm"});return{...e,checkOut:`${e.date}T${t}`,autoFilled:true}}}return e});
+        if(e.checkIn&&!e.checkOut){const dow=new Date(e.date+"T12:00:00").getDay();if(dow>=1&&dow<=5){
+          // Last Friday: auto-fill to 12pm (OT will be calculated in next period)
+          // Other days: L-J=6pm, other Fridays=5pm
+          const isLastFri=e.date===ts&&dow===5;
+          const t=isLastFri?"12:00:00":(dow===5?"17:00:00":"18:00:00");
+          autoFills.push({name:emp.name,date:e.date,time:isLastFri?"12pm (último vie)":(dow===5?"5pm":"6pm")});
+          return{...e,checkOut:`${e.date}T${t}`,autoFilled:true}}}return e});
 
       const clockedDays=empEntries.filter(e=>{if(!e.checkIn||!e.checkOut)return false;const dow=new Date(e.date+"T12:00:00").getDay();return dow>=1&&dow<=5&&!holidayDates.has(e.date)&&!(e.date===fs&&dow===5)}).length;
       const daysWorked=clockedDays+holOnWD;
       const absences=Math.max(0,workDays-daysWorked);const daysPaid=Math.max(0,7-(absences*2));
       const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
 
-      // OT: extra = total effective - scheduled hours. Exit time determines RATE.
-      // First Friday: only count hours AFTER 5pm (exit-time based, not total hours)
-      // Auto-filled entries: skip OT (unknown real exit)
-      let ot={0.25:0,0.5:0,0.75:0,1.0:0},totalEff=0;
-      empEntries.forEach(en=>{if(!en.checkIn||!en.checkOut)return;const dow=new Date(en.checkIn).getDay();const hrs=calcDayHours(en);totalEff+=hrs;
+      // OT WEEKLY: per-day extras by rate, then subtract late-arrival deficit
+      const EXIT_GRACE=10/60;
+      let ot={0.25:0,0.5:0,0.75:0,1.0:0},totalEff=0,weeklyDeficit=0;
+      
+      empEntries.forEach(en=>{
+        if(!en.checkIn||!en.checkOut)return;
+        const dow=new Date(en.checkIn).getDay();
+        const hrs=calcDayHours(en);
+        totalEff+=hrs;
         if(en.autoFilled)return;
         if(dow===0||holidayDates.has(en.date)){ot[1.0]+=hrs;return}
         if(dow===6){ot[0.25]+=hrs;return}
-        
-        // First Friday: only OT after 5pm
-        const isFirstFri=en.date===fs&&dow===5;
-        if(isFirstFri){
+        if(en.date===fs&&dow===5){
           const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
-          if(cH<=17)return; // No OT if left at or before 5pm
-          const otH=cH-17; // Only hours after 5pm
-          ot[0.25]+=otH; // Friday OT at 25%
+          if(cH>17){ot[0.25]+=(cH-17-EXIT_GRACE>0?cH-17-EXIT_GRACE:0)}
           return;
         }
-        
-        // Last Friday: skip OT (will be first Friday of next period)
-        const isLastFri=en.date===ts&&dow===5;
-        if(isLastFri)return;
-        
-        // Mon-Thu: total effective hours vs scheduled
+        if(en.date===ts&&dow===5)return;
+        // Mon-Thu
         const scheduled=getScheduledHours(dow);
-        const extra=hrs-scheduled;
-        if(extra<=0)return;
-        const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
-        if(cH<=19){ot[0.25]+=extra}
-        else if(cH<=21){ot[0.25]+=Math.min(extra,1);if(extra>1)ot[0.5]+=extra-1}
-        else{ot[0.25]+=Math.min(extra,1);const r=Math.max(0,extra-1);ot[0.5]+=Math.min(r,2);if(r>2)ot[0.75]+=r-2}});
+        const rawDiff=hrs-scheduled;
+        if(rawDiff<0){
+          // Late arrival: add to deficit
+          weeklyDeficit+=Math.abs(rawDiff);
+        }else if(rawDiff>0){
+          // Extra hours: subtract exit grace, classify by exit time
+          const extra=rawDiff-EXIT_GRACE;
+          if(extra<=0)return;
+          const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
+          if(cH<=19){ot[0.25]+=extra}
+          else if(cH<=21){ot[0.25]+=Math.min(extra,1);if(extra>1)ot[0.5]+=extra-1}
+          else{ot[0.25]+=Math.min(extra,1);const r=Math.max(0,extra-1);ot[0.5]+=Math.min(r,2);if(r>2)ot[0.75]+=r-2}
+        }
+      });
+      
+      // Subtract deficit from OT buckets (25% first, then 50%, 75%, 100%)
+      let deficit=weeklyDeficit;
+      if(deficit>0&&ot[0.25]>0){const sub=Math.min(deficit,ot[0.25]);ot[0.25]-=sub;deficit-=sub}
+      if(deficit>0&&ot[0.5]>0){const sub=Math.min(deficit,ot[0.5]);ot[0.5]-=sub;deficit-=sub}
+      if(deficit>0&&ot[0.75]>0){const sub=Math.min(deficit,ot[0.75]);ot[0.75]-=sub;deficit-=sub}
+      if(deficit>0&&ot[1.0]>0){const sub=Math.min(deficit,ot[1.0]);ot[1.0]-=sub;deficit-=sub}
       const otPay=Object.entries(ot).reduce((s,[r,h])=>s+h*hourly*(1+parseFloat(r)),0);
 
       const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{total:0};
