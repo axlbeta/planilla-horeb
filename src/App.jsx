@@ -76,12 +76,27 @@ function calcRAP_monthly(sal) { const exc = Math.max(0, sal - IHSS.IVM_TECHO); c
 function isLastWeekOfMonth(from, to) {
   const s = new Date(from+"T12:00:00"), e = new Date(to+"T12:00:00");
   for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)) {
-    const last = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
-    if (d.getDate() === last) return true;
+    const dow = d.getDay();
+    const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    if (ds === from && dow === 5) continue;
+    if (dow === 0 || dow === 6) continue;
+    const lastDay = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+    if (d.getDate() === lastDay) return true;
   }
   return false;
 }
-function isSecondWeekOfMonth(from) { const d = new Date(from+"T12:00:00").getDate(); return d >= 8 && d <= 14; }
+function isSecondWeekOfMonth(from, to) {
+  const s = new Date(from+"T12:00:00"), e = new Date(to+"T12:00:00");
+  for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)) {
+    const dow = d.getDay();
+    const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    if (ds === from && dow === 5) continue;
+    if (dow === 0 || dow === 6) continue;
+    const day = d.getDate();
+    if (day >= 8 && day <= 14) return true;
+  }
+  return false;
+}
 
 function formatL(n) { if (n==null||isNaN(n)) return "L. 0.00"; return "L. "+Number(n).toLocaleString("es-HN",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fN(n) { return (!n||isNaN(n)||n===0) ? "" : Number(n).toLocaleString("es-HN",{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -424,7 +439,7 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
     let holOnWD=0;
     for(let d=new Date(s0);d<=e0;d.setDate(d.getDate()+1)){const dow=d.getDay();const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;if(dow>=1&&dow<=5&&!(ds===fs&&dow===5)&&holidayDates.has(ds))holOnWD++}
 
-    const applyIHSS=isLastWeekOfMonth(fs,ts);const applyRAP=isSecondWeekOfMonth(fs);
+    const applyIHSS=isLastWeekOfMonth(fs,ts);const applyRAP=isSecondWeekOfMonth(fs,ts);
     const autoFills=[];
 
     const rows=weeklyEmps.map(emp=>{
