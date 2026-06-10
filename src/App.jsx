@@ -475,6 +475,7 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
         // Mon-Thu
         const scheduled=getScheduledHours(dow);
         const rawDiff=hrs-scheduled;
+        console.log(`  [${emp.name}] ${en.date} dow=${dow} hrs=${hrs.toFixed(2)} sched=${scheduled} diff=${rawDiff.toFixed(2)} ${rawDiff<0?"DEFICIT":"EXTRA"}`);
         if(rawDiff<0){
           // Late arrival: add to deficit
           weeklyDeficit+=Math.abs(rawDiff);
@@ -495,6 +496,7 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       if(deficit>0&&ot[0.5]>0){const sub=Math.min(deficit,ot[0.5]);ot[0.5]-=sub;deficit-=sub}
       if(deficit>0&&ot[0.75]>0){const sub=Math.min(deficit,ot[0.75]);ot[0.75]-=sub;deficit-=sub}
       if(deficit>0&&ot[1.0]>0){const sub=Math.min(deficit,ot[1.0]);ot[1.0]-=sub;deficit-=sub}
+      console.log(`[${emp.name}] OT before deficit: weeklyDeficit=${weeklyDeficit.toFixed(2)}, ot25=${(ot[0.25]+weeklyDeficit).toFixed(2)} → after: ot25=${ot[0.25].toFixed(2)}, ot50=${ot[0.5].toFixed(2)}, remaining deficit=${deficit.toFixed(2)}`);
       const otPay=Object.entries(ot).reduce((s,[r,h])=>s+h*hourly*(1+parseFloat(r)),0);
 
       const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{total:0};
