@@ -457,9 +457,6 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       // Clock employees
       let empEntries=(byEmp[emp.id]||[]).map(e=>{
         if(e.checkIn&&!e.checkOut){const dow=new Date(e.date+"T12:00:00").getDay();if(dow>=1&&dow<=5){
-          // Last Friday: auto-fill to 12pm (OT will be calculated in next period)
-          // Other days: L-J=6pm, other Fridays=5pm
-          const isLastFri=e.date===ts&&dow===5;
           const t=dow===5?"17:00:00":"18:00:00";
           autoFills.push({name:emp.name,date:e.date,time:dow===5?"5pm":"6pm"});
           return{...e,checkOut:`${e.date}T${t}`,autoFilled:true}}}return e});
@@ -469,9 +466,9 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       const absences=Math.max(0,workDays-daysWorked);const daysPaid=Math.max(0,7-(absences*2));
       const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
 
-      // OT WEEKLY: per-day extras by rate, then subtract late-arrival deficit
+      // OT WEEKLY: per-day extras by rate, deficit from late arrivals, last Friday compensation
       const EXIT_GRACE=10/60;
-      let ot={0.25:0,0.5:0,0.75:0,1.0:0},totalEff=0,weeklyDeficit=0;
+      let ot={0.25:0,0.5:0,0.75:0,1.0:0},totalEff=0,weeklyDeficit=0,weeklyCompensation=0;
       
       empEntries.forEach(en=>{
         if(!en.checkIn||!en.checkOut)return;
@@ -481,21 +478,26 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
         if(en.autoFilled)return;
         if(dow===0||holidayDates.has(en.date)){ot[1.0]+=hrs;return}
         if(dow===6){ot[0.25]+=hrs;return}
+        // First Friday: only OT after 5pm
         if(en.date===fs&&dow===5){
           const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
           if(cH>17){ot[0.25]+=(cH-17-EXIT_GRACE>0?cH-17-EXIT_GRACE:0)}
           return;
         }
-        if(en.date===ts&&dow===5)return;
+        // Last Friday: deficit/compensation only, NO OT buckets
+        if(en.date===ts&&dow===5){
+          const scheduled=getScheduledHours(dow);
+          const rawDiff=hrs-scheduled;
+          if(rawDiff<0) weeklyDeficit+=Math.abs(rawDiff);
+          else weeklyCompensation+=rawDiff;
+          return;
+        }
         // Mon-Thu
         const scheduled=getScheduledHours(dow);
         const rawDiff=hrs-scheduled;
-        console.log(`  [${emp.name}] ${en.date} dow=${dow} hrs=${hrs.toFixed(2)} sched=${scheduled} diff=${rawDiff.toFixed(2)} ${rawDiff<0?"DEFICIT":"EXTRA"}`);
         if(rawDiff<0){
-          // Late arrival: add to deficit
           weeklyDeficit+=Math.abs(rawDiff);
         }else if(rawDiff>0){
-          // Extra hours: subtract exit grace, classify by exit time
           const extra=rawDiff-EXIT_GRACE;
           if(extra<=0)return;
           const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
@@ -505,13 +507,14 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
         }
       });
       
-      // Subtract deficit from OT buckets (25% first, then 50%, 75%, 100%)
+      // Last Friday compensation reduces deficit first
+      weeklyDeficit=Math.max(0,weeklyDeficit-weeklyCompensation);
+      // Subtract remaining deficit from OT buckets (25% first, then 50%, 75%, 100%)
       let deficit=weeklyDeficit;
       if(deficit>0&&ot[0.25]>0){const sub=Math.min(deficit,ot[0.25]);ot[0.25]-=sub;deficit-=sub}
       if(deficit>0&&ot[0.5]>0){const sub=Math.min(deficit,ot[0.5]);ot[0.5]-=sub;deficit-=sub}
       if(deficit>0&&ot[0.75]>0){const sub=Math.min(deficit,ot[0.75]);ot[0.75]-=sub;deficit-=sub}
       if(deficit>0&&ot[1.0]>0){const sub=Math.min(deficit,ot[1.0]);ot[1.0]-=sub;deficit-=sub}
-      console.log(`[${emp.name}] OT before deficit: weeklyDeficit=${weeklyDeficit.toFixed(2)}, ot25=${(ot[0.25]+weeklyDeficit).toFixed(2)} → after: ot25=${ot[0.25].toFixed(2)}, ot50=${ot[0.5].toFixed(2)}, remaining deficit=${deficit.toFixed(2)}`);
       const otPay=Object.entries(ot).reduce((s,[r,h])=>s+h*hourly*(1+parseFloat(r)),0);
 
       const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{total:0};
