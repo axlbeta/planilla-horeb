@@ -475,7 +475,16 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
         const dow=new Date(en.checkIn).getDay();
         const hrs=calcDayHours(en);
         totalEff+=hrs;
-        if(en.autoFilled)return;
+        // Auto-filled: deficit/compensation only, NO OT (unknown real exit)
+        if(en.autoFilled){
+          if(dow>=1&&dow<=5){
+            const scheduled=getScheduledHours(dow);
+            const rawDiff=hrs-scheduled;
+            if(rawDiff<0) weeklyDeficit+=Math.abs(rawDiff);
+            else weeklyCompensation+=rawDiff;
+          }
+          return;
+        }
         if(dow===0||holidayDates.has(en.date)){ot[1.0]+=hrs;return}
         if(dow===6){ot[0.25]+=hrs;return}
         // First Friday: only OT after 5pm
