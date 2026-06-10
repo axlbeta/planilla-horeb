@@ -460,8 +460,8 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
           // Last Friday: auto-fill to 12pm (OT will be calculated in next period)
           // Other days: L-J=6pm, other Fridays=5pm
           const isLastFri=e.date===ts&&dow===5;
-          const t=isLastFri?"12:00:00":(dow===5?"17:00:00":"18:00:00");
-          autoFills.push({name:emp.name,date:e.date,time:isLastFri?"12pm (último vie)":(dow===5?"5pm":"6pm")});
+          const t=dow===5?"17:00:00":"18:00:00";
+          autoFills.push({name:emp.name,date:e.date,time:dow===5?"5pm":"6pm"});
           return{...e,checkOut:`${e.date}T${t}`,autoFilled:true}}}return e});
 
       const clockedDays=empEntries.filter(e=>{if(!e.checkIn||!e.checkOut)return false;const dow=new Date(e.date+"T12:00:00").getDay();return dow>=1&&dow<=5&&!holidayDates.has(e.date)&&!(e.date===fs&&dow===5)}).length;
