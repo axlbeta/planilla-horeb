@@ -467,7 +467,11 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
           return;
         }
         
-        // Mon-Thu + last Friday: total effective hours vs scheduled
+        // Last Friday: skip OT (will be first Friday of next period)
+        const isLastFri=en.date===ts&&dow===5;
+        if(isLastFri)return;
+        
+        // Mon-Thu: total effective hours vs scheduled
         const scheduled=getScheduledHours(dow);
         const extra=hrs-scheduled;
         if(extra<=0)return;
