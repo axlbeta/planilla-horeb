@@ -449,8 +449,10 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
 
       // OT: extra = total effective - scheduled hours. Exit time determines RATE.
+      // Skip OT for auto-filled entries (unknown real exit time)
       let ot={0.25:0,0.5:0,0.75:0,1.0:0},totalEff=0;
       empEntries.forEach(en=>{if(!en.checkIn||!en.checkOut)return;const dow=new Date(en.checkIn).getDay();const hrs=calcDayHours(en);totalEff+=hrs;
+        if(en.autoFilled)return; // Don't calculate OT for auto-filled exits
         if(dow===0||holidayDates.has(en.date)){ot[1.0]+=hrs;return}
         if(dow===6){ot[0.25]+=hrs;return}
         const scheduled=getScheduledHours(dow);
