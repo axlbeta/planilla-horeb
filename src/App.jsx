@@ -112,24 +112,100 @@ function parseClockCSV(csvText) {
   return groupPunches(records);
 }
 function parseClockXLS(data) {
-  try { const wb=XLSX.read(data,{type:"array"}); const ws=wb.Sheets[wb.SheetNames[0]]; const json=XLSX.utils.sheet_to_json(ws,{header:1}); if(json.length<2)return[]; const records=[];
-  for(let i=1;i<json.length;i++){const row=json[i];if(!row||row.length<2)continue;const time=String(row[0]||"").trim(),userId=String(row[1]||"").trim();if(!userId)continue;
-  if(row.length>=10){const ev=String(row[9]||"").trim();if(ev==="Acceso denegado"||ev==="Dispositivo inicializado")continue}
-  let m=time.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);if(!m)continue;const[,p1,p2,yyyy,hh,mi,ss]=m;let dd,mm;
-  if(parseInt(p1)>12){dd=p1;mm=p2}else if(parseInt(p2)>12){mm=p1;dd=p2}else{dd=p1;mm=p2}
-  dd=String(dd).padStart(2,"0");mm=String(mm).padStart(2,"0");
-  records.push({userId,dateStr:`${yyyy}-${mm}-${dd}`,dt:new Date(+yyyy,+mm-1,+dd,+hh,+mi,+(ss||0))})}
-  return groupPunches(records)}catch{return[]}
+  try { 
+    const wb = XLSX.read(data, {type:"array"});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    
+    // Try two approaches: raw values and formatted values
+    const jsonRaw = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:""});
+    const jsonFmt = XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:""});
+    
+    console.log("XLS rows:", jsonRaw.length, "cols:", jsonRaw[0]?.length);
+    if (jsonRaw.length > 1) console.log("Row1 raw:", jsonRaw[1]?.slice(0,3), "type:", typeof jsonRaw[1]?.[0]);
+    if (jsonFmt.length > 1) console.log("Row1 fmt:", jsonFmt[1]?.slice(0,3), "type:", typeof jsonFmt[1]?.[0]);
+    
+    // Try raw first (serial numbers), then formatted (text dates)
+    let records = parseXLSRows(jsonRaw);
+    if (records.length === 0) records = parseXLSRows(jsonFmt);
+    console.log("XLS total parsed:", records.length);
+    return groupPunches(records);
+  } catch(e) { console.error("parseClockXLS error:", e); return []; }
+}
+function parseXLSRows(json) {
+  if (!json || json.length < 2) return [];
+  const records = [];
+  for (let i = 1; i < json.length; i++) {
+    const row = json[i]; if (!row) continue;
+    const rawTime = row[0], userId = String(row[1] ?? "").trim();
+    if (!userId) continue;
+    // Filter "Acceso denegado" if column 9 exists
+    if (row.length >= 10) { const ev = String(row[9] ?? "").trim(); if (ev === "Acceso denegado" || ev === "Dispositivo inicializado") continue; }
+    let dt = null, dateStr = null;
+    if (typeof rawTime === "number" && rawTime > 10000) {
+      // Excel serial number
+      const epoch = new Date(1899, 11, 30); const d = new Date(epoch.getTime() + rawTime * 86400000);
+      if (!isNaN(d.getTime())) { dt = d; dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+    } else if (rawTime instanceof Date) {
+      dt = rawTime; dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
+    } else {
+      const time = String(rawTime ?? "").trim();
+      const m = time.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+      if (!m) continue;
+      const [,p1,p2,yyyy,hh,mi,ss] = m; let dd,mm;
+      if (parseInt(p1)>12){dd=p1;mm=p2} else if(parseInt(p2)>12){mm=p1;dd=p2} else{dd=p1;mm=p2}
+      dd=String(dd).padStart(2,"0"); mm=String(mm).padStart(2,"0");
+      dt=new Date(+yyyy,+mm-1,+dd,+hh,+mi,+(ss||0)); dateStr=`${yyyy}-${mm}-${dd}`;
+    }
+    if (!dt || !dateStr || isNaN(dt.getTime())) continue;
+    records.push({userId, dateStr, dt});
+  }
+  return records;
 }
 function groupPunches(records) {
   const groups={};records.forEach(r=>{const k=`${r.userId}_${r.dateStr}`;if(!groups[k])groups[k]={userId:r.userId,date:r.dateStr,punches:[]};groups[k].punches.push(r.dt)});
-  const entries=[];Object.values(groups).forEach(g=>{g.punches.sort((a,b)=>a-b);const dd=[g.punches[0]];for(let i=1;i<g.punches.length;i++)if(g.punches[i]-g.punches[i-1]>120000)dd.push(g.punches[i]);
-  let e={id:`${g.userId}_${g.date}`,employeeId:g.userId,date:g.date,checkIn:null,lunchOut:null,lunchIn:null,checkOut:null,punches:dd.length};
-  if(dd.length>=4){e.checkIn=dd[0].toISOString();e.lunchOut=dd[1].toISOString();e.lunchIn=dd[2].toISOString();e.checkOut=dd[dd.length-1].toISOString()}
-  else if(dd.length===3){e.checkIn=dd[0].toISOString();e.lunchOut=dd[1].toISOString();e.checkOut=dd[2].toISOString()}
-  else if(dd.length===2){e.checkIn=dd[0].toISOString();e.checkOut=dd[1].toISOString()}
-  else if(dd.length===1){e.checkIn=dd[0].toISOString()}
-  entries.push(e)});return entries.sort((a,b)=>a.date.localeCompare(b.date));
+  const entries=[];
+  Object.values(groups).forEach(g=>{
+    g.punches.sort((a,b)=>a-b);
+    // Deduplicate (within 2 min)
+    const dd=[g.punches[0]];
+    for(let i=1;i<g.punches.length;i++)if(g.punches[i]-g.punches[i-1]>120000)dd.push(g.punches[i]);
+    
+    // Classify by time-of-day ranges:
+    // 6:00 - 10:00 → checkIn (entrada)
+    // 10:00 - 12:30 → lunchOut (salida almuerzo)
+    // 12:30 - 15:00 → lunchIn (regreso almuerzo)
+    // 15:00 - 23:59 → checkOut (salida)
+    let checkIn=null,lunchOut=null,lunchIn=null,checkOut=null;
+    
+    dd.forEach(p=>{
+      const h=p.getHours()+p.getMinutes()/60;
+      if(h>=6&&h<10&&!checkIn) checkIn=p;
+      else if(h>=10&&h<12.5&&!lunchOut) lunchOut=p;
+      else if(h>=12.5&&h<15&&!lunchIn) lunchIn=p;
+      else if(h>=15&&!checkOut) checkOut=p;
+      // Handle edge cases: if all slots for a range are filled, use next available
+      else if(!checkIn) checkIn=p;
+      else if(!lunchOut) lunchOut=p;
+      else if(!lunchIn) lunchIn=p;
+      else if(!checkOut) checkOut=p;
+    });
+
+    // For 4+ punches with positional fallback (if time-based didn't work well)
+    if(dd.length>=4&&!checkIn){checkIn=dd[0];lunchOut=dd[1];lunchIn=dd[2];checkOut=dd[dd.length-1]}
+    
+    const e={
+      id:`${g.userId}_${g.date}`,
+      employeeId:g.userId,
+      date:g.date,
+      checkIn:checkIn?checkIn.toISOString():null,
+      lunchOut:lunchOut?lunchOut.toISOString():null,
+      lunchIn:lunchIn?lunchIn.toISOString():null,
+      checkOut:checkOut?checkOut.toISOString():null,
+      punches:dd.length
+    };
+    entries.push(e);
+  });
+  return entries.sort((a,b)=>a.date.localeCompare(b.date));
 }
 function calcDayHours(entry) {
   if(!entry.checkIn||!entry.checkOut)return 0;
@@ -251,8 +327,27 @@ function ClockTab({employees,clockEntries,refresh}){
 
   const handleFile=e=>{const file=e.target.files[0];if(!file)return;setImporting(true);setImportResult(null);
     const isXLS=file.name.match(/\.xls[xm]?$/i)&&!file.name.match(/\.csv$/i);
+    console.log("File:",file.name,"Size:",file.size,"isXLS:",isXLS);
     const tryParse=text=>{let p=parseClockCSV(text);if(p.length>0)return p;return parseClockCSV(text.replace(/;/g,","))};
-    if(isXLS){const r=new FileReader();r.onload=async evt=>{let p=parseClockXLS(new Uint8Array(evt.target.result));if(p.length===0){const r2=new FileReader();r2.onload=async e2=>{let t=e2.target.result;if(t.includes("<table")){const doc=new DOMParser().parseFromString(t,"text/html");const lines=[];doc.querySelectorAll("tr").forEach(r=>{lines.push(Array.from(r.querySelectorAll("td,th")).map(c=>c.textContent.trim()).join(","))});t=lines.join("\n")}await finishImport(tryParse(t))};r2.readAsText(file,"ISO-8859-1");return}await finishImport(p)};r.readAsArrayBuffer(file)}
+    if(isXLS){const r=new FileReader();r.onload=async evt=>{
+      const arr=new Uint8Array(evt.target.result);
+      let p=parseClockXLS(arr);
+      if(p.length===0){
+        // Fallback: convert XLS to CSV using SheetJS and parse as text
+        try{
+          const wb=XLSX.read(arr,{type:"array",raw:false});
+          const ws=wb.Sheets[wb.SheetNames[0]];
+          const csvText=XLSX.utils.sheet_to_csv(ws,{FS:";"});
+          console.log("XLS→CSV fallback, first 200 chars:",csvText.substring(0,200));
+          p=tryParse(csvText);
+          console.log("CSV fallback parsed:",p.length);
+        }catch(e){console.error("XLS→CSV fallback error:",e)}
+      }
+      if(p.length===0){
+        // Final fallback: read as text (for HTML-based .xls files)
+        const r2=new FileReader();r2.onload=async e2=>{let t=e2.target.result;if(t.includes("<table")){const doc=new DOMParser().parseFromString(t,"text/html");const lines=[];doc.querySelectorAll("tr").forEach(r=>{lines.push(Array.from(r.querySelectorAll("td,th")).map(c=>c.textContent.trim()).join(","))});t=lines.join("\n")}await finishImport(tryParse(t))};r2.readAsText(file,"ISO-8859-1");return;
+      }
+      await finishImport(p)};r.readAsArrayBuffer(file)}
     else{const r=new FileReader();r.onload=async evt=>{let p=tryParse(evt.target.result);if(p.length>0){await finishImport(p);return}const r2=new FileReader();r2.onload=async e2=>{await finishImport(tryParse(e2.target.result))};r2.readAsText(file,"ISO-8859-1")};r.readAsText(file,"UTF-8")}
     e.target.value=""};
 
