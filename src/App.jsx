@@ -71,7 +71,7 @@ function getScheduledHours(dow) { return dow >= 1 && dow <= 4 ? 9 : dow === 5 ? 
 const IHSS = { EM_TECHO: 11903.13, EM_TASA: 0.025, IVM_TECHO: 11903.13, IVM_TASA: 0.025 };
 function calcIHSS_monthly(sal) { const b = Math.min(sal, IHSS.EM_TECHO); return { em: b*IHSS.EM_TASA, ivm: b*IHSS.IVM_TASA, total: b*IHSS.EM_TASA + b*IHSS.IVM_TASA }; }
 function calcIHSS_biweekly(sal) { const m = calcIHSS_monthly(sal); return { em: m.em/2, ivm: m.ivm/2, total: m.total/2 }; }
-function calcRAP_monthly(sal) { const exc = Math.max(0, sal - IHSS.IVM_TECHO); const f = exc * 0.015; return { feo3: f, fio3: f, employeeTotal: f*2, rl: sal*0.04, grandTotal: sal*0.04 + f*2 }; }
+function calcRAP_monthly(sal) { const exc = Math.max(0, sal - IHSS.IVM_TECHO); const f = exc * 0.015; return { feo3: f, fio3: f, employeeTotal: f, rl: sal*0.04, grandTotal: sal*0.04 + f*2 }; }
 
 function isLastWeekOfMonth(from, to) {
   const s = new Date(from+"T12:00:00"), e = new Date(to+"T12:00:00");
@@ -463,7 +463,10 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
 
       const clockedDays=empEntries.filter(e=>{if(!e.checkIn||!e.checkOut)return false;const dow=new Date(e.date+"T12:00:00").getDay();return dow>=1&&dow<=5&&!holidayDates.has(e.date)&&!(e.date===fs&&dow===5)}).length;
       const daysWorked=clockedDays+holOnWD;
-      const absences=Math.max(0,workDays-daysWorked);const daysPaid=Math.max(0,7-(absences*2));
+      const absences=Math.max(0,workDays-daysWorked);
+      const a=adj[emp.id]||{};
+      const hasVacation=(+a.vacation||0)>0;
+      const daysPaid=hasVacation?7:Math.max(0,7-(absences*2));
       const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
 
       // OT WEEKLY: per-day extras by rate, deficit from late arrivals, last Friday compensation
@@ -540,7 +543,7 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
 
       const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{total:0};
       const rapD=applyRAP?calcRAP_monthly(emp.salary):{employeeTotal:0};
-      const a=adj[emp.id]||{};const fuel=+a.fuel||0,vacation=+a.vacation||0,incapacity=+a.incapacity||0,advance=+a.advance||0,dec4=+a.dec4||0,dec3=+a.dec3||0,otherDed=+a.otherDed||0;
+      const fuel=+a.fuel||0,vacation=+a.vacation||0,incapacity=+a.incapacity||0,advance=+a.advance||0,dec4=+a.dec4||0,dec3=+a.dec3||0,otherDed=+a.otherDed||0;
       const totalEarned=baseSalary+otPay+fuel+vacation+incapacity+dec4+dec3;
       const totalDeductions=ihss.total+rapD.employeeTotal+advance+otherDed;
       return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,daily,hourly,daysWorked,absences,daysPaid,days:daysPaid,effectiveHrs:totalEff,baseSalary,ot,otPay,ihssTotal:ihss.total,rap:rapD.employeeTotal,fuel,vacation,incapacity,advance,dec4,dec3,otherDed,totalEarned,totalDeductions,netPay:totalEarned-totalDeductions};
