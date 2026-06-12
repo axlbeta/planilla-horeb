@@ -20,7 +20,7 @@ const db = {
     const { data } = await supabase.from("clock_entries").select("*").order("date", { ascending: false });
     return (data || []).map(e => ({ id: e.id, employeeId: String(e.employee_id), date: String(e.date).slice(0,10), checkIn: e.check_in, lunchOut: e.lunch_out, lunchIn: e.lunch_in, checkOut: e.check_out, punches: e.punches }));
   },
-  async insertClockEntes(entries) {
+  async insertClockEntries(entries) {
     const rows = entries.map(e => ({ id: e.id, employee_id: e.employeeId, date: e.date, check_in: e.checkIn, lunch_out: e.lunchOut, lunch_in: e.lunchIn, check_out: e.checkOut, punches: e.punches }));
     await supabase.from("clock_entries").upsert(rows, { onConflict: "id" });
   },
@@ -446,7 +446,8 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       const isNC=emp.empType==="weekly_nonclock";
       if(isNC){
         const daily=emp.salary/30,hourly=daily/8;const a=adj[emp.id]||{};const faltas=+a.faltas||0;
-        const daysPaid=Math.max(0,7-(faltas*2)),baseSalary=daily*daysPaid;
+        const hasVacNC=(+a.vacation||0)>0;
+        const daysPaid=hasVacNC?Math.max(0,7-faltas):Math.max(0,7-(faltas*2)),baseSalary=daily*daysPaid;
         const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{em:0,ivm:0,total:0};
         const rapD=applyRAP?calcRAP_monthly(emp.salary):{employeeTotal:0};
         const rapManualNC=+a.rapOverride||0;
@@ -468,7 +469,7 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       const absences=Math.max(0,workDays-daysWorked);
       const a=adj[emp.id]||{};
       const hasVacation=(+a.vacation||0)>0;
-      const daysPaid=hasVacation?7:Math.max(0,7-(absences*2));
+      const daysPaid=hasVacation?Math.max(0,7-absences):Math.max(0,7-(absences*2));
       const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
 
       // OT WEEKLY: per-day extras by rate, deficit from late arrivals, last Friday compensation
