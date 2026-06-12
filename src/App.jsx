@@ -20,7 +20,7 @@ const db = {
     const { data } = await supabase.from("clock_entries").select("*").order("date", { ascending: false });
     return (data || []).map(e => ({ id: e.id, employeeId: String(e.employee_id), date: String(e.date).slice(0,10), checkIn: e.check_in, lunchOut: e.lunch_out, lunchIn: e.lunch_in, checkOut: e.check_out, punches: e.punches }));
   },
-  async insertClockEntries(entries) {
+  async insertClockEntes(entries) {
     const rows = entries.map(e => ({ id: e.id, employee_id: e.employeeId, date: e.date, check_in: e.checkIn, lunch_out: e.lunchOut, lunch_in: e.lunchIn, check_out: e.checkOut, punches: e.punches }));
     await supabase.from("clock_entries").upsert(rows, { onConflict: "id" });
   },
@@ -449,10 +449,12 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
         const daysPaid=Math.max(0,7-(faltas*2)),baseSalary=daily*daysPaid;
         const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{em:0,ivm:0,total:0};
         const rapD=applyRAP?calcRAP_monthly(emp.salary):{employeeTotal:0};
+        const rapManualNC=+a.rapOverride||0;
+        const rapNC=rapManualNC>0?rapManualNC:(applyRAP?rapD.employeeTotal:0);
         const fuel=+a.fuel||0,vacation=+a.vacation||0,incapacity=+a.incapacity||0,advance=+a.advance||0,dec4=+a.dec4||0,dec3=+a.dec3||0,otherDed=+a.otherDed||0;
         const totalEarned=baseSalary+fuel+vacation+incapacity+dec4+dec3;
-        const totalDeductions=ihss.total+rapD.employeeTotal+advance+otherDed;
-        return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,daily,hourly,isNonClock:true,daysWorked:workDays-faltas,absences:faltas,daysPaid,days:daysPaid,effectiveHrs:0,baseSalary,ot:{0.25:0,0.5:0,0.75:0,1.0:0},otPay:0,ihssTotal:ihss.total,rap:rapD.employeeTotal,fuel,vacation,incapacity,advance,dec4,dec3,otherDed,totalEarned,totalDeductions,netPay:totalEarned-totalDeductions};
+        const totalDeductions=ihss.total+rapNC+advance+otherDed;
+        return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,daily,hourly,isNonClock:true,daysWorked:workDays-faltas,absences:faltas,daysPaid,days:daysPaid,effectiveHrs:0,baseSalary,ot:{0.25:0,0.5:0,0.75:0,1.0:0},otPay:0,ihssTotal:ihss.total,rap:rapNC,fuel,vacation,incapacity,advance,dec4,dec3,otherDed,totalEarned,totalDeductions,netPay:totalEarned-totalDeductions};
       }
       // Clock employees
       let empEntries=(byEmp[emp.id]||[]).map(e=>{
@@ -543,10 +545,12 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
 
       const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{total:0};
       const rapD=applyRAP?calcRAP_monthly(emp.salary):{employeeTotal:0};
+      const rapManual=+a.rapOverride||0;
+      const rapFinal=rapManual>0?rapManual:(applyRAP?rapD.employeeTotal:0);
       const fuel=+a.fuel||0,vacation=+a.vacation||0,incapacity=+a.incapacity||0,advance=+a.advance||0,dec4=+a.dec4||0,dec3=+a.dec3||0,otherDed=+a.otherDed||0;
       const totalEarned=baseSalary+otPay+fuel+vacation+incapacity+dec4+dec3;
-      const totalDeductions=ihss.total+rapD.employeeTotal+advance+otherDed;
-      return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,daily,hourly,daysWorked,absences,daysPaid,days:daysPaid,effectiveHrs:totalEff,baseSalary,ot,otPay,ihssTotal:ihss.total,rap:rapD.employeeTotal,fuel,vacation,incapacity,advance,dec4,dec3,otherDed,totalEarned,totalDeductions,netPay:totalEarned-totalDeductions};
+      const totalDeductions=ihss.total+rapFinal+advance+otherDed;
+      return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,daily,hourly,daysWorked,absences,daysPaid,days:daysPaid,effectiveHrs:totalEff,baseSalary,ot,otPay,ihssTotal:ihss.total,rap:rapFinal,fuel,vacation,incapacity,advance,dec4,dec3,otherDed,totalEarned,totalDeductions,netPay:totalEarned-totalDeductions};
     });
     setResult({period:`WK${weekNum||"?"} ${from} al ${to}`,rows,from,to,weekNum,workDays,holOnWD,applyIHSS,applyRAP,autoFills,holidayNames:Object.entries(holidayNames).map(([d,n])=>`${n} (${d})`)});
   };
@@ -579,8 +583,9 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
             <td style={{...S.tdM,fontWeight:600}}>{formatL(r.totalEarned)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:13}}>{formatL(r.netPay)}</td></tr>)}
         </tbody><tfoot><tr style={{background:"#e8eef6"}}><td colSpan={7} style={{...S.td,fontWeight:700}}>TOTALES</td><td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.otPay,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#0369a1"}}>{formatL(result.rows.reduce((s,r)=>s+r.rap,0))}</td><td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.totalEarned,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:14}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td></tr></tfoot></table></div></div>
-      <div style={S.card}><h3 style={S.cardTitle}>⚙️ Ajustes</h3><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Empleado","Tipo","Faltas","Comb.","Vac.","Incap.","Adel.","Dec4","Dec3","Otras"].map((h,i)=><th key={i} style={S.th}>{h}</th>)}</tr></thead><tbody>
-        {weeklyEmps.map(emp=>{const a=adj[emp.id]||{};const isNC=emp.empType==="weekly_nonclock";return<tr key={emp.id} style={isNC?{background:"#f0f3f8"}:{}}><td style={{...S.td,fontWeight:600,fontSize:12,color:"#0a2351",whiteSpace:"nowrap"}}>{emp.name}</td><td style={{...S.td,fontSize:11}}>{isNC?<span style={{color:"#1d4ed8",fontSize:10}}>SR</span>:"Reloj"}</td><td style={S.td}>{isNC?<input style={{...S.input,width:50,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.faltas||""} onChange={e=>updAdj(emp.id,"faltas",e.target.value)} placeholder="0"/>:<span style={{color:"#94a3b8",fontSize:11}}>auto</span>}</td>
+      <div style={S.card}><h3 style={S.cardTitle}>⚙️ Ajustes</h3><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Empleado","Tipo","Faltas","RAP","Comb.","Vac.","Incap.","Adel.","Dec4","Dec3","Otras"].map((h,i)=><th key={i} style={S.th}>{h}</th>)}</tr></thead><tbody>
+        {weeklyEmps.map(emp=>{const a=adj[emp.id]||{};const isNC=emp.empType==="weekly_nonclock";const rapAuto=calcRAP_monthly(emp.salary).employeeTotal;return<tr key={emp.id} style={isNC?{background:"#f0f3f8"}:{}}><td style={{...S.td,fontWeight:600,fontSize:12,color:"#0a2351",whiteSpace:"nowrap"}}>{emp.name}</td><td style={{...S.td,fontSize:11}}>{isNC?<span style={{color:"#1d4ed8",fontSize:10}}>SR</span>:"Reloj"}</td><td style={S.td}>{isNC?<input style={{...S.input,width:50,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.faltas||""} onChange={e=>updAdj(emp.id,"faltas",e.target.value)} placeholder="0"/>:<span style={{color:"#94a3b8",fontSize:11}}>auto</span>}</td>
+        <td style={S.td}><input style={{...S.input,width:80,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.rapOverride||""} onChange={e=>updAdj(emp.id,"rapOverride",e.target.value)} placeholder={rapAuto.toFixed(2)}/></td>
         {["fuel","vacation","incapacity","advance","dec4","dec3","otherDed"].map(f=><td key={f} style={S.td}><input style={{...S.input,width:70,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0"/></td>)}</tr>})}
       </tbody></table></div></div>
     </>}
