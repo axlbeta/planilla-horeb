@@ -248,6 +248,63 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
   const w=window.open("","_blank");if(w){w.document.write(html);w.document.close()}
 }
 
+function exportPayrollExcel(payroll) {
+  const rows = payroll.rows;
+  const data = rows.map(r => ({
+    "Código": r.employeeId,
+    "Nombre": r.name,
+    "Posición": r.position,
+    "Sal.Mensual": r.salary,
+    "Sal.Diario": r.daily,
+    "Días": r.days,
+    "Salario": r.baseSalary,
+    "OT 25%": r.ot?.[0.25] || 0,
+    "OT 50%": r.ot?.[0.5] || 0,
+    "OT 75%": r.ot?.[0.75] || 0,
+    "OT 100%": r.ot?.[1.0] || 0,
+    "Sal/Hr": r.hourly,
+    "Total OT": r.otPay,
+    "IHSS": r.ihssTotal || 0,
+    "RAP": r.rap || 0,
+    "Combustible": r.fuel || 0,
+    "Vacaciones": r.vacation || 0,
+    "Incapacidad": r.incapacity || 0,
+    "Adelanto": r.advance || 0,
+    "Dec.4to": r.dec4 || 0,
+    "Dec.3ro": r.dec3 || 0,
+    "Otras Ded.": r.otherDed || 0,
+    "Devengado": r.totalEarned,
+    "Tot.Deducciones": r.totalDeductions,
+    "Neto": r.netPay,
+  }));
+  // Add totals row
+  data.push({
+    "Código": "",
+    "Nombre": "TOTALES",
+    "Posición": "",
+    "Sal.Mensual": rows.reduce((s,r)=>s+r.salary,0),
+    "Sal.Diario": "",
+    "Días": "",
+    "Salario": rows.reduce((s,r)=>s+r.baseSalary,0),
+    "OT 25%": "", "OT 50%": "", "OT 75%": "", "OT 100%": "",
+    "Sal/Hr": "",
+    "Total OT": rows.reduce((s,r)=>s+r.otPay,0),
+    "IHSS": rows.reduce((s,r)=>s+(r.ihssTotal||0),0),
+    "RAP": rows.reduce((s,r)=>s+(r.rap||0),0),
+    "Combustible": "", "Vacaciones": "", "Incapacidad": "",
+    "Adelanto": "", "Dec.4to": "", "Dec.3ro": "", "Otras Ded.": "",
+    "Devengado": rows.reduce((s,r)=>s+r.totalEarned,0),
+    "Tot.Deducciones": rows.reduce((s,r)=>s+r.totalDeductions,0),
+    "Neto": rows.reduce((s,r)=>s+r.netPay,0),
+  });
+  const ws = XLSX.utils.json_to_sheet(data);
+  // Set column widths
+  ws["!cols"] = [{wch:8},{wch:30},{wch:18},{wch:12},{wch:10},{wch:6},{wch:12},{wch:8},{wch:8},{wch:8},{wch:8},{wch:10},{wch:12},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Planilla");
+  XLSX.writeFile(wb, `Planilla_${payroll.period.replace(/[^a-zA-Z0-9]/g,"_")}.xlsx`);
+}
+
 // ═══ TABS ═══
 const TABS=[
   {id:"dash",label:"Dashboard",icon:"📊"},
@@ -570,7 +627,7 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
         <div>IHSS: <strong style={{color:result.applyIHSS?"#7c3aed":"#94a3b8"}}>{result.applyIHSS?"✓ Aplica":"No"}</strong></div><div>RAP: <strong style={{color:result.applyRAP?"#0369a1":"#94a3b8"}}>{result.applyRAP?"✓ Aplica":"No"}</strong></div>
       </div>{result.holidayNames?.length>0&&<div style={{marginTop:8,display:"flex",gap:6,flexWrap:"wrap"}}>{result.holidayNames.map((h,i)=><span key={i} style={{padding:"2px 8px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e"}}>🎌 {h}</span>)}</div>}</div>
       {result.autoFills?.length>0&&<div style={{...S.card,background:"#fffbeb",border:"1px solid #fde68a"}}><h4 style={{fontSize:13,color:"#92400e",marginBottom:6}}>⚠️ Salida auto-completada</h4><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{result.autoFills.map((f,i)=><span key={i} style={{padding:"3px 10px",background:"#fff",border:"1px solid #fde68a",borderRadius:6,fontSize:12,color:"#92400e"}}>{f.name} — {f.date} → {f.time}</span>)}</div></div>}
-      <div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>{result.period}</h3><div style={{display:"flex",gap:8}}><button style={S.btnGold} onClick={()=>printPayroll(result)}>🖨️</button><button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"...":"💾 Guardar"}</button></div></div>
+      <div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>{result.period}</h3><div style={{display:"flex",gap:8}}><button style={S.btnGold} onClick={()=>printPayroll(result)}>🖨️</button><button style={{...S.btnGold,background:"linear-gradient(135deg,#059669,#10b981)"}} onClick={()=>exportPayrollExcel(result)}>📊 Excel</button><button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"...":"💾 Guardar"}</button></div></div>
         <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Pos.","Sal.M.","Trab.","Faltas","Pago","Salario","Tot.OT","IHSS","RAP","Dev.","Ded.","Neto"].map((h,i)=><th key={i} style={{...S.th,fontSize:10,textAlign:i>=3?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
           {result.rows.map(r=><tr key={r.employeeId} style={r.absences>0?{background:"#fffbeb"}:r.isNonClock?{background:"#f0f3f8"}:{}}>
             <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td><td style={{...S.td,fontWeight:600,whiteSpace:"nowrap",fontSize:12,color:"#0a2351"}}>{r.name}{r.isNonClock&&<span style={{fontSize:9,color:"#1d4ed8",background:"#eff6ff",padding:"1px 4px",borderRadius:3,marginLeft:3}}>SR</span>}</td>
@@ -616,7 +673,7 @@ function ConfidentialTab({employees,refresh}){
         {conf.map(e=>{const ihss=calcIHSS_biweekly(e.salary);return<tr key={e.id}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600}}>{e.name}</td><td style={S.td}>{e.position}</td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/2)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(ihss.total)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>})}
       </tbody></table></div>}</div>
     <div style={S.card}><h3 style={S.cardTitle}>📋 Generar Quincenal</h3><div style={S.formGrid}><Field l="Desde" v={from} o={setFrom} t="date"/><Field l="Hasta" v={to} o={setTo} t="date"/><div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div></div></div>
-    {result&&<div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>{result.period}</h3><div style={{display:"flex",gap:8}}><button style={S.btnGold} onClick={()=>printPayroll(result)}>🖨️</button><button style={S.btnPrimary} onClick={doSaveP} disabled={paySaving}>{paySaving?"...":"💾 Guardar"}</button></div></div>
+    {result&&<div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>{result.period}</h3><div style={{display:"flex",gap:8}}><button style={S.btnGold} onClick={()=>printPayroll(result)}>🖨️</button><button style={{...S.btnGold,background:"linear-gradient(135deg,#059669,#10b981)"}} onClick={()=>exportPayrollExcel(result)}>📊 Excel</button><button style={S.btnPrimary} onClick={doSaveP} disabled={paySaving}>{paySaving?"...":"💾 Guardar"}</button></div></div>
       <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Sal.M.","Quincenal","IHSS EM","IHSS IVM","Tot.IHSS","Adel.","Otras","Tot.Ded.","Neto"].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=2?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
         {result.rows.map(r=><tr key={r.employeeId}><td style={S.td}><span style={S.badge}>{r.employeeId}</span></td><td style={{...S.td,fontWeight:600}}>{r.name}</td><td style={S.tdM}>{formatL(r.salary)}</td><td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssEM)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssIVM)}</td><td style={{...S.tdM,fontWeight:600,color:"#7c3aed"}}>{formatL(r.ihssTotal)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.advance)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.otherDed)}</td><td style={{...S.tdM,fontWeight:600,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:13}}>{formatL(r.netPay)}</td></tr>)}
       </tbody><tfoot><tr style={{background:"#e8eef6"}}><td colSpan={3} style={{...S.td,fontWeight:700}}>TOTALES</td><td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td><td colSpan={2}></td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td><td colSpan={2}></td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:14}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td></tr></tfoot></table></div>
