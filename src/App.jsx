@@ -271,11 +271,12 @@ export default function App(){
 
   if(loading)return(<div style={S.loading}><style>{CSS}</style><img src={LOGO} alt="H" style={{height:50,marginBottom:20,borderRadius:8}}/><div style={S.spinner}/><p style={{color:"rgba(255,255,255,0.6)",marginTop:14,fontSize:13}}>Cargando...</p></div>);
 
-  const T={dash:DashboardTab,emp:EmployeesTab,clock:ClockTab,pay:PayrollTab,conf:ConfidentialTab,hist:HistoryTab}[tab];
+  const allTabs={dash:DashboardTab,emp:EmployeesTab,clock:ClockTab,pay:PayrollTab,conf:ConfidentialTab,hist:HistoryTab};
+  const tabProps={employees,refresh,clockEntries,payrolls,holidays};
   return(<div style={S.app}><style>{CSS}</style>
     <header style={S.header}><div style={S.brand}><img src={LOGO} alt="H" style={S.logoImg}/><div style={S.brandDivider}/><div style={S.brandSub}>Sistema de Planilla</div></div>
     <nav style={S.nav}>{TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{...S.navBtn,...(tab===t.id?S.navAct:{})}}><span>{t.icon}</span><span>{t.label}</span></button>)}</nav></header>
-    <main style={S.main}><T employees={employees} refresh={refresh} clockEntries={clockEntries} payrolls={payrolls} holidays={holidays}/></main>
+    <main style={S.main}>{Object.entries(allTabs).map(([id,Comp])=><div key={id} style={{display:tab===id?"block":"none"}}><Comp {...tabProps}/></div>)}</main>
     <footer style={S.footer}><span>Impresos Horeb © {new Date().getFullYear()}</span><span style={{color:"#94a3b8"}}>v4.0</span></footer>
   </div>);
 }
