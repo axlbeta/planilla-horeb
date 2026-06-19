@@ -237,13 +237,13 @@ function calcDayHours(entry) {
 
 // ═══ PRINT ═══
 function printPayroll(payroll) {
-  const rows=payroll.rows;const t={sal:rows.reduce((s,r)=>s+(r.salary||0),0),base:rows.reduce((s,r)=>s+r.baseSalary,0),ot:rows.reduce((s,r)=>s+r.otPay,0),ihss:rows.reduce((s,r)=>s+(r.ihssTotal||0),0),rap:rows.reduce((s,r)=>s+(r.rap||0),0),earned:rows.reduce((s,r)=>s+r.totalEarned,0),ded:rows.reduce((s,r)=>s+r.totalDeductions,0),net:rows.reduce((s,r)=>s+r.netPay,0)};
-  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Planilla ${payroll.period}</title><style>@page{size:landscape;margin:10mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:8pt}table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#0a2351;color:#fff;padding:4px 3px;font-size:6.5pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:3px;border:1px solid #c8d6e5;font-size:7.5pt}.r{text-align:right;font-family:'Courier New',monospace}.c{text-align:center}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351}.net{color:#0a6847;font-weight:700}.ot-val{color:#b91c1c}.ihss{color:#6d28d9}.header{text-align:center;margin-bottom:10px}.header img{height:36px;margin-bottom:4px}.signatures{margin-top:30px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:180px}.sig-line{border-top:1px solid #000;margin-top:40px;padding-top:3px;font-size:8pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.btn{padding:8px 20px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:6px}</style></head><body>
+  const rows=payroll.rows;const t={sal:rows.reduce((s,r)=>s+(r.salary||0),0),base:rows.reduce((s,r)=>s+r.baseSalary,0),ot:rows.reduce((s,r)=>s+r.otPay,0),ihss:rows.reduce((s,r)=>s+(r.ihssTotal||0),0),rap:rows.reduce((s,r)=>s+(r.rap||0),0),fuel:rows.reduce((s,r)=>s+(r.fuel||0),0),vac:rows.reduce((s,r)=>s+(r.vacation||0),0),incap:rows.reduce((s,r)=>s+(r.incapacity||0),0),adv:rows.reduce((s,r)=>s+(r.advance||0),0),earned:rows.reduce((s,r)=>s+r.totalEarned,0),ded:rows.reduce((s,r)=>s+r.totalDeductions,0),net:rows.reduce((s,r)=>s+r.netPay,0)};
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Planilla ${payroll.period}</title><style>@page{size:landscape;margin:8mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:7pt}table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#0a2351;color:#fff;padding:3px 2px;font-size:6pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:2px 3px;border:1px solid #c8d6e5;font-size:7pt}.r{text-align:right;font-family:'Courier New',monospace}.c{text-align:center}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351}.net{color:#0a6847;font-weight:700}.ot-val{color:#b91c1c}.ihss{color:#6d28d9}.header{text-align:center;margin-bottom:8px}.header img{height:32px;margin-bottom:4px}.signatures{margin-top:25px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:160px}.sig-line{border-top:1px solid #000;margin-top:35px;padding-top:3px;font-size:7pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.btn{padding:8px 20px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:6px}</style></head><body>
 <div class="no-print"><button class="btn" style="background:#0a2351;color:#fff" onclick="window.print()">🖨️ Imprimir</button><button class="btn" style="background:#64748b;color:#fff" onclick="window.close()">✕ Cerrar</button></div>
 <div class="header"><img src="${LOGO}" alt="Horeb"/><div style="font-size:10pt;color:#1a3a6b">Planilla de Empleados</div><div style="font-size:9pt;font-weight:bold;color:#0a2351;margin-top:3px">${payroll.period}</div></div>
-<table><thead><tr><th rowspan="2">Cód</th><th rowspan="2">Nombre</th><th rowspan="2">Pos.</th><th rowspan="2">Sal.M.</th><th rowspan="2">Sal.D.</th><th rowspan="2">Días</th><th rowspan="2">Salario</th><th colspan="4">Horas Extras</th><th rowspan="2">Sal/Hr</th><th rowspan="2">Tot.OT</th><th rowspan="2">IHSS</th><th rowspan="2">RAP</th><th rowspan="2">Comb.</th><th rowspan="2">Adel.</th><th rowspan="2">Deveng.</th><th rowspan="2">Tot.Ded.</th><th rowspan="2">Neto</th></tr><tr><th>25%</th><th>50%</th><th>75%</th><th>100%</th></tr></thead><tbody>
-${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td><td class="r">${fN(r.salary)}</td><td class="r">${fN(r.daily)}</td><td class="c">${r.days}</td><td class="r">${fN(r.baseSalary)}</td><td class="r${r.ot[0.25]>0?' ot-val':''}">${r.ot[0.25]>0?r.ot[0.25].toFixed(1):''}</td><td class="r${r.ot[0.5]>0?' ot-val':''}">${r.ot[0.5]>0?r.ot[0.5].toFixed(1):''}</td><td class="r${r.ot[0.75]>0?' ot-val':''}">${r.ot[0.75]>0?r.ot[0.75].toFixed(1):''}</td><td class="r${r.ot[1.0]>0?' ot-val':''}">${r.ot[1.0]>0?r.ot[1.0].toFixed(1):''}</td><td class="r">${fN(r.hourly)}</td><td class="r ot-val">${fN(r.otPay)}</td><td class="r ihss">${fN(r.ihssTotal)}</td><td class="r ihss">${fN(r.rap)}</td><td class="r">${fN(r.fuel)}</td><td class="r">${fN(r.advance)}</td><td class="r" style="font-weight:600">${fN(r.totalEarned)}</td><td class="r">${fN(r.totalDeductions)}</td><td class="r net">${fN(r.netPay)}</td></tr>`).join("")}
-<tr class="total-row"><td colspan="3" style="text-align:right">TOTALES</td><td class="r">${fN(t.sal)}</td><td></td><td></td><td class="r">${fN(t.base)}</td><td colspan="4"></td><td></td><td class="r ot-val">${fN(t.ot)}</td><td class="r ihss">${fN(t.ihss)}</td><td class="r ihss">${fN(t.rap)}</td><td colspan="2"></td><td class="r" style="font-weight:700">${fN(t.earned)}</td><td class="r">${fN(t.ded)}</td><td class="r net" style="font-size:9pt">${fN(t.net)}</td></tr></tbody></table>
+<table><thead><tr><th rowspan="2">Cód</th><th rowspan="2">Nombre</th><th rowspan="2">Pos.</th><th rowspan="2">Sal.M.</th><th rowspan="2">Sal.D.</th><th rowspan="2">Días</th><th rowspan="2">Salario</th><th colspan="4">Horas Extras</th><th rowspan="2">Sal/Hr</th><th rowspan="2">Tot.OT</th><th rowspan="2">IHSS</th><th rowspan="2">RAP</th><th rowspan="2">Comb.</th><th rowspan="2">Vac.</th><th rowspan="2">Incap.</th><th rowspan="2">Adel.</th><th rowspan="2">Deveng.</th><th rowspan="2">Tot.Ded.</th><th rowspan="2">Neto</th></tr><tr><th>25%</th><th>50%</th><th>75%</th><th>100%</th></tr></thead><tbody>
+${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td><td class="r">${fN(r.salary)}</td><td class="r">${fN(r.daily)}</td><td class="c">${r.days}</td><td class="r">${fN(r.baseSalary)}</td><td class="r${r.ot[0.25]>0?' ot-val':''}">${r.ot[0.25]>0?r.ot[0.25].toFixed(1):''}</td><td class="r${r.ot[0.5]>0?' ot-val':''}">${r.ot[0.5]>0?r.ot[0.5].toFixed(1):''}</td><td class="r${r.ot[0.75]>0?' ot-val':''}">${r.ot[0.75]>0?r.ot[0.75].toFixed(1):''}</td><td class="r${r.ot[1.0]>0?' ot-val':''}">${r.ot[1.0]>0?r.ot[1.0].toFixed(1):''}</td><td class="r">${fN(r.hourly)}</td><td class="r ot-val">${fN(r.otPay)}</td><td class="r ihss">${fN(r.ihssTotal)}</td><td class="r ihss">${fN(r.rap)}</td><td class="r">${fN(r.fuel)}</td><td class="r">${fN(r.vacation)}</td><td class="r">${fN(r.incapacity)}</td><td class="r">${fN(r.advance)}</td><td class="r" style="font-weight:600">${fN(r.totalEarned)}</td><td class="r">${fN(r.totalDeductions)}</td><td class="r net">${fN(r.netPay)}</td></tr>`).join("")}
+<tr class="total-row"><td colspan="3" style="text-align:right">TOTALES</td><td class="r">${fN(t.sal)}</td><td></td><td></td><td class="r">${fN(t.base)}</td><td colspan="4"></td><td></td><td class="r ot-val">${fN(t.ot)}</td><td class="r ihss">${fN(t.ihss)}</td><td class="r ihss">${fN(t.rap)}</td><td class="r">${fN(t.fuel)}</td><td class="r">${fN(t.vac)}</td><td class="r">${fN(t.incap)}</td><td class="r">${fN(t.adv)}</td><td class="r" style="font-weight:700">${fN(t.earned)}</td><td class="r">${fN(t.ded)}</td><td class="r net" style="font-size:8pt">${fN(t.net)}</td></tr></tbody></table>
 <div class="signatures"><div class="sig-box"><div class="sig-line">Elaborado por</div></div><div class="sig-box"><div class="sig-line">Revisado por</div></div><div class="sig-box"><div class="sig-line">Autorizado por</div></div></div></body></html>`;
   const w=window.open("","_blank");if(w){w.document.write(html);w.document.close()}
 }
@@ -251,55 +251,48 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
 function exportPayrollExcel(payroll) {
   const rows = payroll.rows;
   const data = rows.map(r => ({
-    "Código": r.employeeId,
+    "Cód": r.employeeId,
     "Nombre": r.name,
     "Posición": r.position,
-    "Sal.Mensual": r.salary,
-    "Sal.Diario": r.daily,
+    "Sal.Mensual": +r.salary.toFixed(2),
+    "Sal.Diario": +r.daily.toFixed(2),
     "Días": r.days,
-    "Salario": r.baseSalary,
-    "OT 25%": r.ot?.[0.25] || 0,
-    "OT 50%": r.ot?.[0.5] || 0,
-    "OT 75%": r.ot?.[0.75] || 0,
-    "OT 100%": r.ot?.[1.0] || 0,
-    "Sal/Hr": r.hourly,
-    "Total OT": r.otPay,
-    "IHSS": r.ihssTotal || 0,
-    "RAP": r.rap || 0,
-    "Combustible": r.fuel || 0,
-    "Vacaciones": r.vacation || 0,
-    "Incapacidad": r.incapacity || 0,
-    "Adelanto": r.advance || 0,
-    "Dec.4to": r.dec4 || 0,
-    "Dec.3ro": r.dec3 || 0,
-    "Otras Ded.": r.otherDed || 0,
-    "Devengado": r.totalEarned,
-    "Tot.Deducciones": r.totalDeductions,
-    "Neto": r.netPay,
+    "Salario": +r.baseSalary.toFixed(2),
+    "OT 25%": r.ot?.[0.25]>0?+r.ot[0.25].toFixed(1):"",
+    "OT 50%": r.ot?.[0.5]>0?+r.ot[0.5].toFixed(1):"",
+    "OT 75%": r.ot?.[0.75]>0?+r.ot[0.75].toFixed(1):"",
+    "OT 100%": r.ot?.[1.0]>0?+r.ot[1.0].toFixed(1):"",
+    "Sal/Hr": +r.hourly.toFixed(2),
+    "Total OT": +r.otPay.toFixed(2),
+    "IHSS": +(r.ihssTotal||0).toFixed(2),
+    "RAP": +(r.rap||0).toFixed(2),
+    "Combustible": +(r.fuel||0).toFixed(2),
+    "Vacaciones": +(r.vacation||0).toFixed(2),
+    "Incapacidad": +(r.incapacity||0).toFixed(2),
+    "Adelanto": +(r.advance||0).toFixed(2),
+    "Devengado": +r.totalEarned.toFixed(2),
+    "Tot.Deducciones": +r.totalDeductions.toFixed(2),
+    "Neto": +r.netPay.toFixed(2),
   }));
-  // Add totals row
   data.push({
-    "Código": "",
-    "Nombre": "TOTALES",
-    "Posición": "",
-    "Sal.Mensual": rows.reduce((s,r)=>s+r.salary,0),
-    "Sal.Diario": "",
-    "Días": "",
-    "Salario": rows.reduce((s,r)=>s+r.baseSalary,0),
-    "OT 25%": "", "OT 50%": "", "OT 75%": "", "OT 100%": "",
-    "Sal/Hr": "",
-    "Total OT": rows.reduce((s,r)=>s+r.otPay,0),
-    "IHSS": rows.reduce((s,r)=>s+(r.ihssTotal||0),0),
-    "RAP": rows.reduce((s,r)=>s+(r.rap||0),0),
-    "Combustible": "", "Vacaciones": "", "Incapacidad": "",
-    "Adelanto": "", "Dec.4to": "", "Dec.3ro": "", "Otras Ded.": "",
-    "Devengado": rows.reduce((s,r)=>s+r.totalEarned,0),
-    "Tot.Deducciones": rows.reduce((s,r)=>s+r.totalDeductions,0),
-    "Neto": rows.reduce((s,r)=>s+r.netPay,0),
+    "Cód": "", "Nombre": "TOTALES", "Posición": "",
+    "Sal.Mensual": +rows.reduce((s,r)=>s+r.salary,0).toFixed(2),
+    "Sal.Diario": "", "Días": "",
+    "Salario": +rows.reduce((s,r)=>s+r.baseSalary,0).toFixed(2),
+    "OT 25%":"","OT 50%":"","OT 75%":"","OT 100%":"","Sal/Hr":"",
+    "Total OT": +rows.reduce((s,r)=>s+r.otPay,0).toFixed(2),
+    "IHSS": +rows.reduce((s,r)=>s+(r.ihssTotal||0),0).toFixed(2),
+    "RAP": +rows.reduce((s,r)=>s+(r.rap||0),0).toFixed(2),
+    "Combustible": +rows.reduce((s,r)=>s+(r.fuel||0),0).toFixed(2),
+    "Vacaciones": +rows.reduce((s,r)=>s+(r.vacation||0),0).toFixed(2),
+    "Incapacidad": +rows.reduce((s,r)=>s+(r.incapacity||0),0).toFixed(2),
+    "Adelanto": +rows.reduce((s,r)=>s+(r.advance||0),0).toFixed(2),
+    "Devengado": +rows.reduce((s,r)=>s+r.totalEarned,0).toFixed(2),
+    "Tot.Deducciones": +rows.reduce((s,r)=>s+r.totalDeductions,0).toFixed(2),
+    "Neto": +rows.reduce((s,r)=>s+r.netPay,0).toFixed(2),
   });
   const ws = XLSX.utils.json_to_sheet(data);
-  // Set column widths
-  ws["!cols"] = [{wch:8},{wch:30},{wch:18},{wch:12},{wch:10},{wch:6},{wch:12},{wch:8},{wch:8},{wch:8},{wch:8},{wch:10},{wch:12},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:12}];
+  ws["!cols"]=[{wch:6},{wch:30},{wch:18},{wch:12},{wch:10},{wch:5},{wch:12},{wch:7},{wch:7},{wch:7},{wch:7},{wch:9},{wch:11},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:12}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Planilla");
   XLSX.writeFile(wb, `Planilla_${payroll.period.replace(/[^a-zA-Z0-9]/g,"_")}.xlsx`);
@@ -317,24 +310,76 @@ const TABS=[
 
 // ═══ APP ═══
 export default function App(){
+  const[user,setUser]=useState(null);
+  const[authLoading,setAuthLoading]=useState(true);
   const[tab,setTab]=useState("dash");
   const[employees,setEmployees]=useState([]);
   const[clockEntries,setClockEntries]=useState([]);
   const[payrolls,setPayrolls]=useState([]);
   const[holidays,setHolidays]=useState([]);
   const[loading,setLoading]=useState(true);
-  const refresh=useCallback(async()=>{const[e,c,p,h]=await Promise.all([db.getEmployees(),db.getClockEntries(),db.getPayrolls(),db.getHolidays()]);setEmployees(e);setClockEntries(c);setPayrolls(p);setHolidays(h)},[]);
-  useEffect(()=>{refresh().then(()=>setLoading(false))},[refresh]);
 
+  useEffect(()=>{supabase.auth.getSession().then(({data:{session}})=>{setUser(session?.user||null);setAuthLoading(false)});
+    const{data:{subscription}}=supabase.auth.onAuthStateChange((_,session)=>{setUser(session?.user||null)});
+    return()=>subscription.unsubscribe()},[]);
+
+  const refresh=useCallback(async()=>{const[e,c,p,h]=await Promise.all([db.getEmployees(),db.getClockEntries(),db.getPayrolls(),db.getHolidays()]);setEmployees(e);setClockEntries(c);setPayrolls(p);setHolidays(h)},[]);
+  useEffect(()=>{if(user){refresh().then(()=>setLoading(false))}},[user,refresh]);
+
+  const handleLogout=async()=>{await supabase.auth.signOut();setUser(null)};
+
+  if(authLoading)return(<div style={S.loading}><style>{CSS}</style><img src={LOGO} alt="H" style={{height:50,marginBottom:20,borderRadius:8}}/><div style={S.spinner}/></div>);
+  if(!user)return <LoginScreen globalStyles={CSS}/>;
   if(loading)return(<div style={S.loading}><style>{CSS}</style><img src={LOGO} alt="H" style={{height:50,marginBottom:20,borderRadius:8}}/><div style={S.spinner}/><p style={{color:"rgba(255,255,255,0.6)",marginTop:14,fontSize:13}}>Cargando...</p></div>);
 
   const allTabs={dash:DashboardTab,emp:EmployeesTab,clock:ClockTab,pay:PayrollTab,conf:ConfidentialTab,hist:HistoryTab};
   const tabProps={employees,refresh,clockEntries,payrolls,holidays};
   return(<div style={S.app}><style>{CSS}</style>
     <header style={S.header}><div style={S.brand}><img src={LOGO} alt="H" style={S.logoImg}/><div style={S.brandDivider}/><div style={S.brandSub}>Sistema de Planilla</div></div>
-    <nav style={S.nav}>{TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{...S.navBtn,...(tab===t.id?S.navAct:{})}}><span>{t.icon}</span><span>{t.label}</span></button>)}</nav></header>
+    <nav style={S.nav}>{TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{...S.navBtn,...(tab===t.id?S.navAct:{})}}><span>{t.icon}</span><span>{t.label}</span></button>)}
+    <div style={S.brandDivider}/>
+    <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:"rgba(255,255,255,0.4)",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.email}</span><button onClick={handleLogout} style={{...S.navBtn,color:"#f87171",fontSize:12,padding:"6px 10px"}}>🚪 Salir</button></div>
+    </nav></header>
     <main style={S.main}>{Object.entries(allTabs).map(([id,Comp])=><div key={id} style={{display:tab===id?"block":"none"}}><Comp {...tabProps}/></div>)}</main>
     <footer style={S.footer}><span>Impresos Horeb © {new Date().getFullYear()}</span><span style={{color:"#94a3b8"}}>v4.0</span></footer>
+  </div>);
+}
+
+// ═══ LOGIN ═══
+function LoginScreen({globalStyles}){
+  const[email,setEmail]=useState("");const[password,setPassword]=useState("");const[error,setError]=useState("");const[loading,setLoading]=useState(false);const[isRegister,setIsRegister]=useState(false);
+  const handleSubmit=async()=>{
+    if(!email||!password)return setError("Ingresa correo y contraseña.");
+    setLoading(true);setError("");
+    if(isRegister){
+      const{error:err}=await supabase.auth.signUp({email,password});
+      if(err){setError(err.message);setLoading(false);return}
+      setIsRegister(false);setLoading(false);alert("✅ Cuenta creada. Ahora inicia sesión.");
+    }else{
+      const{error:err}=await supabase.auth.signInWithPassword({email,password});
+      if(err){setError("Correo o contraseña incorrectos.");setLoading(false);return}
+      setLoading(false);
+    }
+  };
+  return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"linear-gradient(135deg,#0a2351,#1a4a8a)",fontFamily:"'Source Sans 3',sans-serif",padding:20}}>
+    <style>{globalStyles}</style>
+    <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:420,boxShadow:"0 24px 80px rgba(0,0,0,0.4)",overflow:"hidden"}}>
+      <div style={{background:"linear-gradient(135deg,#0a2351,#163a72)",padding:"32px 40px 28px",textAlign:"center",borderBottom:"3px solid #c9a227"}}>
+        <img src={LOGO} alt="Horeb" style={{height:45,marginBottom:12,borderRadius:6}}/>
+        <div style={{color:"rgba(255,255,255,0.5)",fontSize:12,letterSpacing:"0.15em",textTransform:"uppercase"}}>Sistema de Planilla</div>
+      </div>
+      <div style={{padding:"32px 40px 36px"}}>
+        <h2 style={{fontSize:20,fontWeight:700,color:"#0a2351",marginBottom:4}}>{isRegister?"Crear Cuenta":"Iniciar Sesión"}</h2>
+        <p style={{fontSize:13,color:"#64748b",marginBottom:24}}>{isRegister?"Registra un nuevo usuario.":"Ingresa tus credenciales."}</p>
+        {error&&<div style={{padding:"10px 14px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,marginBottom:16,fontSize:13,color:"#dc2626"}}>{error}</div>}
+        <div style={{display:"flex",flexDirection:"column",gap:16}}>
+          <div><label style={{fontSize:11,fontWeight:700,color:"#475569",textTransform:"uppercase"}}>Correo</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="usuario@empresa.com" style={{display:"block",width:"100%",padding:"11px 14px",border:"1px solid #d0daea",borderRadius:10,fontSize:14,marginTop:4}}/></div>
+          <div><label style={{fontSize:11,fontWeight:700,color:"#475569",textTransform:"uppercase"}}>Contraseña</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e=>e.key==="Enter"&&handleSubmit()} style={{display:"block",width:"100%",padding:"11px 14px",border:"1px solid #d0daea",borderRadius:10,fontSize:14,marginTop:4}}/></div>
+          <button onClick={handleSubmit} disabled={loading} style={{padding:"12px",background:"linear-gradient(135deg,#0a2351,#163a72)",color:"#fff",border:"none",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer",opacity:loading?0.7:1}}>{loading?"Procesando...":isRegister?"Crear Cuenta":"Ingresar"}</button>
+        </div>
+        <div style={{textAlign:"center",marginTop:20}}><button onClick={()=>{setIsRegister(!isRegister);setError("")}} style={{background:"none",border:"none",color:"#1a5ab8",fontSize:13,cursor:"pointer"}}>{isRegister?"← Ya tengo cuenta":"Registrar nuevo usuario →"}</button></div>
+      </div>
+    </div>
   </div>);
 }
 
