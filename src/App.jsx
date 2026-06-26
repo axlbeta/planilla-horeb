@@ -555,7 +555,7 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       const isNC=emp.empType==="weekly_nonclock";
       if(isNC){
         const daily=emp.salary/30,hourly=daily/8;const a=adj[emp.id]||{};const faltas=+a.faltas||0;
-        const hasVacNC=(+a.vacation||0)>0;
+        const hasVacNC=(+a.vacation||0)>0||(+a.incapacity||0)>0;
         const daysPaid=hasVacNC?Math.max(0,7-faltas):Math.max(0,7-(faltas*2)),baseSalary=daily*daysPaid;
         const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{em:0,ivm:0,total:0};
         const rapD=applyRAP?calcRAP_monthly(emp.salary):{employeeTotal:0};
@@ -577,7 +577,7 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       const daysWorked=clockedDays+holOnWD;
       const absences=Math.max(0,workDays-daysWorked);
       const a=adj[emp.id]||{};
-      const hasVacation=(+a.vacation||0)>0;
+      const hasVacation=(+a.vacation||0)>0||(+a.incapacity||0)>0;
       const daysPaid=hasVacation?Math.max(0,7-absences):Math.max(0,7-(absences*2));
       const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
 
