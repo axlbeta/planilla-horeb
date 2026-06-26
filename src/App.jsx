@@ -237,13 +237,13 @@ function calcDayHours(entry) {
 
 // ═══ PRINT ═══
 function printPayroll(payroll) {
-  const rows=payroll.rows;const t={sal:rows.reduce((s,r)=>s+(r.salary||0),0),base:rows.reduce((s,r)=>s+r.baseSalary,0),ot:rows.reduce((s,r)=>s+r.otPay,0),ihss:rows.reduce((s,r)=>s+(r.ihssTotal||0),0),rap:rows.reduce((s,r)=>s+(r.rap||0),0),fuel:rows.reduce((s,r)=>s+(r.fuel||0),0),vac:rows.reduce((s,r)=>s+(r.vacation||0),0),incap:rows.reduce((s,r)=>s+(r.incapacity||0),0),adv:rows.reduce((s,r)=>s+(r.advance||0),0),earned:rows.reduce((s,r)=>s+r.totalEarned,0),ded:rows.reduce((s,r)=>s+r.totalDeductions,0),net:rows.reduce((s,r)=>s+r.netPay,0)};
+  const rows=payroll.rows;const t={sal:rows.reduce((s,r)=>s+(r.salary||0),0),base:rows.reduce((s,r)=>s+r.baseSalary,0),ot:rows.reduce((s,r)=>s+r.otPay,0),ihss:rows.reduce((s,r)=>s+(r.ihssTotal||0),0),rap:rows.reduce((s,r)=>s+(r.rap||0),0),fuel:rows.reduce((s,r)=>s+(r.fuel||0),0),vac:rows.reduce((s,r)=>s+(r.vacation||0),0),incap:rows.reduce((s,r)=>s+(r.incapacity||0),0),dec4:rows.reduce((s,r)=>s+(r.dec4||0),0),dec3:rows.reduce((s,r)=>s+(r.dec3||0),0),adv:rows.reduce((s,r)=>s+(r.advance||0),0),otherDed:rows.reduce((s,r)=>s+(r.otherDed||0),0),earned:rows.reduce((s,r)=>s+r.totalEarned,0),ded:rows.reduce((s,r)=>s+r.totalDeductions,0),net:rows.reduce((s,r)=>s+r.netPay,0)};
   const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Planilla ${payroll.period}</title><style>@page{size:landscape;margin:8mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:7pt}table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#0a2351;color:#fff;padding:3px 2px;font-size:6pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:2px 3px;border:1px solid #c8d6e5;font-size:7pt}.r{text-align:right;font-family:'Courier New',monospace}.c{text-align:center}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351}.net{color:#0a6847;font-weight:700}.ot-val{color:#b91c1c}.ihss{color:#6d28d9}.header{text-align:center;margin-bottom:8px}.header img{height:32px;margin-bottom:4px}.signatures{margin-top:25px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:160px}.sig-line{border-top:1px solid #000;margin-top:35px;padding-top:3px;font-size:7pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.btn{padding:8px 20px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:6px}</style></head><body>
 <div class="no-print"><button class="btn" style="background:#0a2351;color:#fff" onclick="window.print()">🖨️ Imprimir</button><button class="btn" style="background:#64748b;color:#fff" onclick="window.close()">✕ Cerrar</button></div>
 <div class="header"><img src="${LOGO}" alt="Horeb"/><div style="font-size:10pt;color:#1a3a6b">Planilla de Empleados</div><div style="font-size:9pt;font-weight:bold;color:#0a2351;margin-top:3px">${payroll.period}</div></div>
-<table><thead><tr><th rowspan="2">Cód</th><th rowspan="2">Nombre</th><th rowspan="2">Pos.</th><th rowspan="2">Sal.M.</th><th rowspan="2">Sal.D.</th><th rowspan="2">Días</th><th rowspan="2">Salario</th><th colspan="4">Horas Extras</th><th rowspan="2">Sal/Hr</th><th rowspan="2">Tot.OT</th><th rowspan="2">IHSS</th><th rowspan="2">RAP</th><th rowspan="2">Comb.</th><th rowspan="2">Vac.</th><th rowspan="2">Incap.</th><th rowspan="2">Adel.</th><th rowspan="2">Deveng.</th><th rowspan="2">Tot.Ded.</th><th rowspan="2">Neto</th></tr><tr><th>25%</th><th>50%</th><th>75%</th><th>100%</th></tr></thead><tbody>
-${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td><td class="r">${fN(r.salary)}</td><td class="r">${fN(r.daily)}</td><td class="c">${r.days}</td><td class="r">${fN(r.baseSalary)}</td><td class="r${r.ot[0.25]>0?' ot-val':''}">${r.ot[0.25]>0?r.ot[0.25].toFixed(1):''}</td><td class="r${r.ot[0.5]>0?' ot-val':''}">${r.ot[0.5]>0?r.ot[0.5].toFixed(1):''}</td><td class="r${r.ot[0.75]>0?' ot-val':''}">${r.ot[0.75]>0?r.ot[0.75].toFixed(1):''}</td><td class="r${r.ot[1.0]>0?' ot-val':''}">${r.ot[1.0]>0?r.ot[1.0].toFixed(1):''}</td><td class="r">${fN(r.hourly)}</td><td class="r ot-val">${fN(r.otPay)}</td><td class="r ihss">${fN(r.ihssTotal)}</td><td class="r ihss">${fN(r.rap)}</td><td class="r">${fN(r.fuel)}</td><td class="r">${fN(r.vacation)}</td><td class="r">${fN(r.incapacity)}</td><td class="r">${fN(r.advance)}</td><td class="r" style="font-weight:600">${fN(r.totalEarned)}</td><td class="r">${fN(r.totalDeductions)}</td><td class="r net">${fN(r.netPay)}</td></tr>`).join("")}
-<tr class="total-row"><td colspan="3" style="text-align:right">TOTALES</td><td class="r">${fN(t.sal)}</td><td></td><td></td><td class="r">${fN(t.base)}</td><td colspan="4"></td><td></td><td class="r ot-val">${fN(t.ot)}</td><td class="r ihss">${fN(t.ihss)}</td><td class="r ihss">${fN(t.rap)}</td><td class="r">${fN(t.fuel)}</td><td class="r">${fN(t.vac)}</td><td class="r">${fN(t.incap)}</td><td class="r">${fN(t.adv)}</td><td class="r" style="font-weight:700">${fN(t.earned)}</td><td class="r">${fN(t.ded)}</td><td class="r net" style="font-size:8pt">${fN(t.net)}</td></tr></tbody></table>
+<table><thead><tr><th rowspan="2">Cód</th><th rowspan="2">Nombre</th><th rowspan="2">Pos.</th><th rowspan="2">Sal.M.</th><th rowspan="2">Sal.D.</th><th rowspan="2">Días</th><th rowspan="2">Salario</th><th colspan="4">Horas Extras</th><th rowspan="2">Sal/Hr</th><th rowspan="2">Tot.OT</th><th colspan="5" style="background:#065f46;border-color:#065f46">Otros Ingresos</th><th colspan="4" style="background:#991b1b;border-color:#991b1b">Deducciones</th><th rowspan="2">Deveng.</th><th rowspan="2">Tot.Ded.</th><th rowspan="2">Neto</th></tr><tr><th>25%</th><th>50%</th><th>75%</th><th>100%</th><th style="background:#065f46;border-color:#065f46">Comb.</th><th style="background:#065f46;border-color:#065f46">Vac.</th><th style="background:#065f46;border-color:#065f46">Incap.</th><th style="background:#065f46;border-color:#065f46">Dec.14</th><th style="background:#065f46;border-color:#065f46">Dec.13</th><th style="background:#991b1b;border-color:#991b1b">IHSS</th><th style="background:#991b1b;border-color:#991b1b">RAP</th><th style="background:#991b1b;border-color:#991b1b">Adel.</th><th style="background:#991b1b;border-color:#991b1b">Otras</th></tr></thead><tbody>
+${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td><td class="r">${fN(r.salary)}</td><td class="r">${fN(r.daily)}</td><td class="c">${r.days}</td><td class="r">${fN(r.baseSalary)}</td><td class="r${r.ot[0.25]>0?' ot-val':''}">${r.ot[0.25]>0?r.ot[0.25].toFixed(1):''}</td><td class="r${r.ot[0.5]>0?' ot-val':''}">${r.ot[0.5]>0?r.ot[0.5].toFixed(1):''}</td><td class="r${r.ot[0.75]>0?' ot-val':''}">${r.ot[0.75]>0?r.ot[0.75].toFixed(1):''}</td><td class="r${r.ot[1.0]>0?' ot-val':''}">${r.ot[1.0]>0?r.ot[1.0].toFixed(1):''}</td><td class="r">${fN(r.hourly)}</td><td class="r ot-val">${fN(r.otPay)}</td><td class="r">${fN(r.fuel)}</td><td class="r">${fN(r.vacation)}</td><td class="r">${fN(r.incapacity)}</td><td class="r">${fN(r.dec4)}</td><td class="r">${fN(r.dec3)}</td><td class="r ihss">${fN(r.ihssTotal)}</td><td class="r ihss">${fN(r.rap)}</td><td class="r">${fN(r.advance)}</td><td class="r">${fN(r.otherDed)}</td><td class="r" style="font-weight:600">${fN(r.totalEarned)}</td><td class="r">${fN(r.totalDeductions)}</td><td class="r net">${fN(r.netPay)}</td></tr>`).join("")}
+<tr class="total-row"><td colspan="3" style="text-align:right">TOTALES</td><td class="r">${fN(t.sal)}</td><td></td><td></td><td class="r">${fN(t.base)}</td><td colspan="4"></td><td></td><td class="r ot-val">${fN(t.ot)}</td><td class="r">${fN(t.fuel)}</td><td class="r">${fN(t.vac)}</td><td class="r">${fN(t.incap)}</td><td class="r">${fN(t.dec4)}</td><td class="r">${fN(t.dec3)}</td><td class="r ihss">${fN(t.ihss)}</td><td class="r ihss">${fN(t.rap)}</td><td class="r">${fN(t.adv)}</td><td class="r">${fN(t.otherDed)}</td><td class="r" style="font-weight:700">${fN(t.earned)}</td><td class="r">${fN(t.ded)}</td><td class="r net" style="font-size:8pt">${fN(t.net)}</td></tr></tbody></table>
 <div class="signatures"><div class="sig-box"><div class="sig-line">Elaborado por</div></div><div class="sig-box"><div class="sig-line">Revisado por</div></div><div class="sig-box"><div class="sig-line">Autorizado por</div></div></div></body></html>`;
   const w=window.open("","_blank");if(w){w.document.write(html);w.document.close()}
 }
@@ -264,12 +264,15 @@ function exportPayrollExcel(payroll) {
     "OT 100%": r.ot?.[1.0]>0?+r.ot[1.0].toFixed(1):"",
     "Sal/Hr": +r.hourly.toFixed(2),
     "Total OT": +r.otPay.toFixed(2),
-    "IHSS": +(r.ihssTotal||0).toFixed(2),
-    "RAP": +(r.rap||0).toFixed(2),
     "Combustible": +(r.fuel||0).toFixed(2),
     "Vacaciones": +(r.vacation||0).toFixed(2),
     "Incapacidad": +(r.incapacity||0).toFixed(2),
+    "Dec.14": +(r.dec4||0).toFixed(2),
+    "Dec.13": +(r.dec3||0).toFixed(2),
+    "IHSS": +(r.ihssTotal||0).toFixed(2),
+    "RAP": +(r.rap||0).toFixed(2),
     "Adelanto": +(r.advance||0).toFixed(2),
+    "Otras Ded.": +(r.otherDed||0).toFixed(2),
     "Devengado": +r.totalEarned.toFixed(2),
     "Tot.Deducciones": +r.totalDeductions.toFixed(2),
     "Neto": +r.netPay.toFixed(2),
@@ -281,18 +284,21 @@ function exportPayrollExcel(payroll) {
     "Salario": +rows.reduce((s,r)=>s+r.baseSalary,0).toFixed(2),
     "OT 25%":"","OT 50%":"","OT 75%":"","OT 100%":"","Sal/Hr":"",
     "Total OT": +rows.reduce((s,r)=>s+r.otPay,0).toFixed(2),
-    "IHSS": +rows.reduce((s,r)=>s+(r.ihssTotal||0),0).toFixed(2),
-    "RAP": +rows.reduce((s,r)=>s+(r.rap||0),0).toFixed(2),
     "Combustible": +rows.reduce((s,r)=>s+(r.fuel||0),0).toFixed(2),
     "Vacaciones": +rows.reduce((s,r)=>s+(r.vacation||0),0).toFixed(2),
     "Incapacidad": +rows.reduce((s,r)=>s+(r.incapacity||0),0).toFixed(2),
+    "Dec.14": +rows.reduce((s,r)=>s+(r.dec4||0),0).toFixed(2),
+    "Dec.13": +rows.reduce((s,r)=>s+(r.dec3||0),0).toFixed(2),
+    "IHSS": +rows.reduce((s,r)=>s+(r.ihssTotal||0),0).toFixed(2),
+    "RAP": +rows.reduce((s,r)=>s+(r.rap||0),0).toFixed(2),
     "Adelanto": +rows.reduce((s,r)=>s+(r.advance||0),0).toFixed(2),
+    "Otras Ded.": +rows.reduce((s,r)=>s+(r.otherDed||0),0).toFixed(2),
     "Devengado": +rows.reduce((s,r)=>s+r.totalEarned,0).toFixed(2),
     "Tot.Deducciones": +rows.reduce((s,r)=>s+r.totalDeductions,0).toFixed(2),
     "Neto": +rows.reduce((s,r)=>s+r.netPay,0).toFixed(2),
   });
   const ws = XLSX.utils.json_to_sheet(data);
-  ws["!cols"]=[{wch:6},{wch:30},{wch:18},{wch:12},{wch:10},{wch:5},{wch:12},{wch:7},{wch:7},{wch:7},{wch:7},{wch:9},{wch:11},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:12}];
+  ws["!cols"]=[{wch:6},{wch:30},{wch:18},{wch:12},{wch:10},{wch:5},{wch:12},{wch:7},{wch:7},{wch:7},{wch:7},{wch:9},{wch:11},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:12},{wch:12}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Planilla");
   XLSX.writeFile(wb, `Planilla_${payroll.period.replace(/[^a-zA-Z0-9]/g,"_")}.xlsx`);
