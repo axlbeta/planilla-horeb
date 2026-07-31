@@ -628,18 +628,34 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
           else if(rawDiff>0){const extra=rawDiff-EXIT_GRACE;if(extra>0)ot[0.25]+=extra}
           return;
         }
-        // Mon-Thu
+        // Mon-Thu: OT by actual exit time brackets
         const scheduled=getScheduledHours(dow);
         const rawDiff=hrs-scheduled;
-        if(rawDiff<0){
-          weeklyDeficit+=Math.abs(rawDiff);
-        }else if(rawDiff>0){
-          const extra=rawDiff-EXIT_GRACE;
-          if(extra<=0)return;
-          const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
-          if(cH<=19){ot[0.25]+=extra}
-          else if(cH<=21){ot[0.25]+=Math.min(extra,1);if(extra>1)ot[0.5]+=extra-1}
-          else{ot[0.25]+=Math.min(extra,1);const r=Math.max(0,extra-1);ot[0.5]+=Math.min(r,2);if(r>2)ot[0.75]+=r-2}
+        const scheduledExit=dow===5?17:18;
+        const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
+        
+        if(cH>scheduledExit+EXIT_GRACE){
+          // Calculate actual time in each bracket after grace
+          const otStart=scheduledExit+EXIT_GRACE;
+          let b25=Math.max(0,Math.min(cH,19)-otStart);
+          let b50=Math.max(0,Math.min(cH,21)-Math.max(otStart,19));
+          let b75=Math.max(0,cH-Math.max(otStart,21));
+          let totalBracket=b25+b50+b75;
+          
+          if(rawDiff<=0){
+            // Late arrival consumed all after-exit time
+            weeklyDeficit+=Math.abs(rawDiff);
+            b25=b50=b75=0;
+          }else if(rawDiff<totalBracket){
+            // Late arrival reduced OT → scale down proportionally
+            const scale=rawDiff/totalBracket;
+            b25*=scale;b50*=scale;b75*=scale;
+          }
+          ot[0.25]+=b25;ot[0.5]+=b50;ot[0.75]+=b75;
+        }else{
+          // Didn't stay past grace → no after-exit OT
+          if(rawDiff<0) weeklyDeficit+=Math.abs(rawDiff);
+          else if(rawDiff>0) weeklyCompensation+=rawDiff; // early/short lunch → compensates deficit
         }
       });
       
