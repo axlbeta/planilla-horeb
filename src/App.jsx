@@ -634,6 +634,16 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
         const scheduledExit=dow===5?17:18;
         const cH=new Date(en.checkOut).getHours()+new Date(en.checkOut).getMinutes()/60;
         
+        // Lunch OT: worked through lunch → 25%
+        let lunchOT=0;
+        if(!en.lunchOut&&!en.lunchIn&&hrs>=5){
+          lunchOT=1; // No lunch at all → 1 hour at 25%
+        }else if(en.lunchOut&&en.lunchIn){
+          const lunchMin=(new Date(en.lunchIn)-new Date(en.lunchOut))/60000;
+          if(lunchMin<60)lunchOT=(60-lunchMin)/60; // Short lunch → difference at 25%
+        }
+        if(lunchOT>0)ot[0.25]+=lunchOT;
+        
         if(cH>scheduledExit+EXIT_GRACE){
           // Calculate actual time in each bracket after grace
           const otStart=scheduledExit+EXIT_GRACE;
@@ -642,20 +652,20 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
           let b75=Math.max(0,cH-Math.max(otStart,21));
           let totalBracket=b25+b50+b75;
           
-          if(rawDiff<=0){
-            // Late arrival consumed all after-exit time
-            weeklyDeficit+=Math.abs(rawDiff);
+          // Cap exit brackets by rawDiff (late arrival reduces exit OT)
+          const exitRawDiff=rawDiff-lunchOT; // exclude lunch OT from cap
+          if(exitRawDiff<=0){
             b25=b50=b75=0;
-          }else if(rawDiff<totalBracket){
-            // Late arrival reduced OT → scale down proportionally
-            const scale=rawDiff/totalBracket;
+            if(rawDiff<0)weeklyDeficit+=Math.abs(rawDiff);
+          }else if(exitRawDiff<totalBracket){
+            const scale=exitRawDiff/totalBracket;
             b25*=scale;b50*=scale;b75*=scale;
           }
           ot[0.25]+=b25;ot[0.5]+=b50;ot[0.75]+=b75;
         }else{
           // Didn't stay past grace → no after-exit OT
           if(rawDiff<0) weeklyDeficit+=Math.abs(rawDiff);
-          else if(rawDiff>0) weeklyCompensation+=rawDiff; // early/short lunch → compensates deficit
+          else if(rawDiff>0&&lunchOT===0) weeklyCompensation+=rawDiff;
         }
       });
       
