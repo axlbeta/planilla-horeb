@@ -93,7 +93,7 @@ function isSecondWeekOfMonth(from, to) {
     if (ds === from && dow === 5) continue;
     if (dow === 0 || dow === 6) continue;
     const day = d.getDate();
-    if (day >= 8 && day <= 14) return true;
+    if (day >= 8 && day <= 10) return true;
   }
   return false;
 }
