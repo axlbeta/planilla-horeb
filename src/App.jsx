@@ -772,18 +772,18 @@ function ConfidentialTab({employees,refresh}){
       const bw=emp.salary/2;
       const a=adj[emp.id]||{};
       
-      // IHSS: only first half
-      const ihss=isFirst?calcIHSS_biweekly(emp.salary):{em:0,ivm:0,total:0};
-      // RAP: only second half
-      const rap=!isFirst?calcRAP_monthly(emp.salary).employeeTotal:0;
+      // IHSS: only second half
+      const ihss=!isFirst?calcIHSS_biweekly(emp.salary):{em:0,ivm:0,total:0};
+      // RAP: only first half
+      const rap=isFirst?calcRAP_monthly(emp.salary).employeeTotal:0;
       const rapManual=+a.rapOverride||0;
       const rapFinal=rapManual>0?rapManual:rap;
-      // ISR: only second half (auto-calculated, editable)
+      // ISR: only first half (auto-calculated, editable)
       const medicalExp=+a.medicalExp||0;
       const afpAnnual=+a.afpAnnual||0;
-      const isrAuto=!isFirst?calcISR_monthly(emp.salary,medicalExp,afpAnnual):0;
+      const isrAuto=isFirst?calcISR_monthly(emp.salary,medicalExp,afpAnnual):0;
       const isrManual=+a.isr||0;
-      const isr=!isFirst?(isrManual>0?isrManual:isrAuto):0;
+      const isr=isFirst?(isrManual>0?isrManual:isrAuto):0;
       
       // Manual income fields
       const otAmount=+a.otAmount||0; // Overtime amount (manual)
@@ -814,9 +814,9 @@ function ConfidentialTab({employees,refresh}){
   const printConf=()=>{
     if(!result)return;const rows=result.rows;const isFirst=result.isFirst;
     const t={base:rows.reduce((s,r)=>s+r.baseSalary,0),ot:rows.reduce((s,r)=>s+r.otAmount,0),bonus:rows.reduce((s,r)=>s+r.bonus,0),vac:rows.reduce((s,r)=>s+r.vacation,0),ihss:rows.reduce((s,r)=>s+r.ihssTotal,0),rap:rows.reduce((s,r)=>s+r.rap,0),isr:rows.reduce((s,r)=>s+r.isr,0),adv:rows.reduce((s,r)=>s+r.advance,0),other:rows.reduce((s,r)=>s+r.otherDed,0),earned:rows.reduce((s,r)=>s+r.totalEarned,0),ded:rows.reduce((s,r)=>s+r.totalDeductions,0),net:rows.reduce((s,r)=>s+r.netPay,0)};
-    const dedCols=isFirst?`<th>IHSS EM</th><th>IHSS IVM</th><th>Tot.IHSS</th>`:`<th>RAP</th><th>ISR</th>`;
-    const dedData=(r)=>isFirst?`<td class="r">${fN(r.ihssEM)}</td><td class="r">${fN(r.ihssIVM)}</td><td class="r">${fN(r.ihssTotal)}</td>`:`<td class="r">${fN(r.rap)}</td><td class="r">${fN(r.isr)}</td>`;
-    const dedTotals=isFirst?`<td class="r">${fN(t.ihss)}</td><td></td><td></td>`:`<td class="r">${fN(t.rap)}</td><td class="r">${fN(t.isr)}</td>`;
+    const dedCols=!isFirst?`<th>IHSS EM</th><th>IHSS IVM</th><th>Tot.IHSS</th>`:`<th>RAP</th><th>ISR</th>`;
+    const dedData=(r)=>!isFirst?`<td class="r">${fN(r.ihssEM)}</td><td class="r">${fN(r.ihssIVM)}</td><td class="r">${fN(r.ihssTotal)}</td>`:`<td class="r">${fN(r.rap)}</td><td class="r">${fN(r.isr)}</td>`;
+    const dedTotals=!isFirst?`<td class="r">${fN(t.ihss)}</td><td></td><td></td>`:`<td class="r">${fN(t.rap)}</td><td class="r">${fN(t.isr)}</td>`;
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Confidencial ${result.period}</title><style>@page{size:landscape;margin:10mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:8pt}table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#0a2351;color:#fff;padding:4px 3px;font-size:6.5pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:3px;border:1px solid #c8d6e5;font-size:7.5pt}.r{text-align:right;font-family:'Courier New',monospace}.c{text-align:center}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351}.net{color:#0a6847;font-weight:700}.header{text-align:center;margin-bottom:8px}.header img{height:36px;margin-bottom:4px}.signatures{margin-top:30px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:180px}.sig-line{border-top:1px solid #000;margin-top:40px;padding-top:3px;font-size:8pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.btn{padding:8px 20px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:6px}</style></head><body>
 <div class="no-print"><button class="btn" style="background:#0a2351;color:#fff" onclick="window.print()">🖨️ Imprimir</button><button class="btn" style="background:#64748b;color:#fff" onclick="window.close()">✕ Cerrar</button></div>
 <div class="header"><img src="${LOGO}" alt="Horeb"/><div style="font-size:10pt;color:#1a3a6b">Planilla Confidencial</div><div style="font-size:9pt;font-weight:bold;color:#0a2351;margin-top:3px">${result.period}</div></div>
@@ -842,11 +842,11 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
     <div style={S.card}><h3 style={S.cardTitle}>📋 Generar Quincenal</h3>
       <div style={S.formGrid}>
         <Field l="Mes" v={month} o={setMonth} t="month"/>
-        <div><label style={S.label}>Quincena</label><select style={S.input} value={quincena} onChange={e=>setQuincena(e.target.value)}><option value="1">1ra Quincena (1-15) — IHSS</option><option value="2">2da Quincena (16-30) — RAP + ISR</option></select></div>
+        <div><label style={S.label}>Quincena</label><select style={S.input} value={quincena} onChange={e=>setQuincena(e.target.value)}><option value="1">1ra Quincena (1-15) — RAP + ISR</option><option value="2">2da Quincena (16-30) — IHSS</option></select></div>
         <div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div>
       </div>
       <div style={{marginTop:10,padding:"8px 12px",background:quincena==="1"?"#eff6ff":"#fef3c7",borderRadius:8,fontSize:12}}>
-        {quincena==="1"?<span style={{color:"#1d4ed8"}}>📌 1ra quincena: se deduce <strong>IHSS</strong></span>:<span style={{color:"#92400e"}}>📌 2da quincena: se deduce <strong>RAP</strong> e <strong>ISR</strong></span>}
+        {quincena==="1"?<span style={{color:"#1d4ed8"}}>📌 1ra quincena: se deduce <strong>RAP</strong> e <strong>ISR</strong></span>:<span style={{color:"#92400e"}}>📌 2da quincena: se deduce <strong>IHSS</strong></span>}
       </div>
     </div>
 
@@ -857,7 +857,7 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
         <th style={{...S.th,background:"#065f46"}}>H.Extras L.</th>
         <th style={{...S.th,background:"#065f46"}}>Bono Prod.</th>
         <th style={{...S.th,background:"#065f46"}}>Vacaciones</th>
-          {quincena==="2"&&<><th style={{...S.th,background:"#991b1b"}}>RAP</th><th style={{...S.th,background:"#991b1b"}}>ISR</th><th style={{...S.th,background:"#064e3b"}}>AFP Anual</th><th style={{...S.th,background:"#064e3b"}}>Gastos Méd.</th></>}
+          {quincena==="1"&&<><th style={{...S.th,background:"#991b1b"}}>RAP</th><th style={{...S.th,background:"#991b1b"}}>ISR</th><th style={{...S.th,background:"#064e3b"}}>AFP Anual</th><th style={{...S.th,background:"#064e3b"}}>Gastos Méd.</th></>}
         <th style={{...S.th,background:"#991b1b"}}>Adelanto</th>
         <th style={{...S.th,background:"#991b1b"}}>Otras Ded.</th>
       </tr></thead><tbody>
@@ -866,7 +866,7 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.otAmount||""} onChange={e=>updAdj(emp.id,"otAmount",e.target.value)} placeholder="0.00"/></td>
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.bonus||""} onChange={e=>updAdj(emp.id,"bonus",e.target.value)} placeholder="0.00"/></td>
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.vacation||""} onChange={e=>updAdj(emp.id,"vacation",e.target.value)} placeholder="0.00"/></td>
-          {quincena==="2"&&<><td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.rapOverride||""} onChange={e=>updAdj(emp.id,"rapOverride",e.target.value)} placeholder={rapAuto.toFixed(2)}/></td>
+          {quincena==="1"&&<><td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.rapOverride||""} onChange={e=>updAdj(emp.id,"rapOverride",e.target.value)} placeholder={rapAuto.toFixed(2)}/></td>
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.isr||""} onChange={e=>updAdj(emp.id,"isr",e.target.value)} placeholder={calcISR_monthly(emp.salary,+(a.medicalExp||0),+(a.afpAnnual||0)).toFixed(2)}/></td>
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.afpAnnual||""} onChange={e=>updAdj(emp.id,"afpAnnual",e.target.value)} placeholder="0.00"/></td>
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.medicalExp||""} onChange={e=>updAdj(emp.id,"medicalExp",e.target.value)} placeholder="0.00"/></td></>}
@@ -874,7 +874,7 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.otherDed||""} onChange={e=>updAdj(emp.id,"otherDed",e.target.value)} placeholder="0.00"/></td>
         </tr>})}
       </tbody></table></div>
-      <p style={{fontSize:11,color:"#64748b",marginTop:6}}>Ingresa ajustes y dale <strong>Generar</strong> para recalcular. {quincena==="2"?"RAP muestra el valor auto-calculado como referencia.":""}</p>
+      <p style={{fontSize:11,color:"#64748b",marginTop:6}}>Ingresa ajustes y dale <strong>Generar</strong> para recalcular. {quincena==="1"?"RAP muestra el valor auto-calculado como referencia.":""}</p>
     </div>}
 
     {/* Result */}
@@ -882,7 +882,7 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
       <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
         <th style={S.th}>Cód</th><th style={S.th}>Nombre</th><th style={S.th}>Sal.M.</th><th style={S.th}>Quincenal</th>
         <th style={{...S.th,background:"#065f46"}}>H.Extras</th><th style={{...S.th,background:"#065f46"}}>Bono</th><th style={{...S.th,background:"#065f46"}}>Vac.</th>
-        {result.isFirst?<><th style={{...S.th,background:"#991b1b"}}>IHSS EM</th><th style={{...S.th,background:"#991b1b"}}>IHSS IVM</th><th style={{...S.th,background:"#991b1b"}}>Tot.IHSS</th></>:<><th style={{...S.th,background:"#991b1b"}}>RAP</th><th style={{...S.th,background:"#991b1b"}}>ISR</th></>}
+        {!result.isFirst?<><th style={{...S.th,background:"#991b1b"}}>IHSS EM</th><th style={{...S.th,background:"#991b1b"}}>IHSS IVM</th><th style={{...S.th,background:"#991b1b"}}>Tot.IHSS</th></>:<><th style={{...S.th,background:"#991b1b"}}>RAP</th><th style={{...S.th,background:"#991b1b"}}>ISR</th></>}
         <th style={{...S.th,background:"#991b1b"}}>Adel.</th><th style={{...S.th,background:"#991b1b"}}>Otras</th>
         <th style={S.th}>Deveng.</th><th style={S.th}>Tot.Ded.</th><th style={S.th}>Neto</th>
       </tr></thead><tbody>
@@ -894,7 +894,7 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
           <td style={{...S.tdM,color:"#059669"}}>{formatL(r.otAmount)}</td>
           <td style={{...S.tdM,color:"#059669"}}>{formatL(r.bonus)}</td>
           <td style={{...S.tdM,color:"#059669"}}>{formatL(r.vacation)}</td>
-          {result.isFirst?<><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssEM)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssIVM)}</td><td style={{...S.tdM,fontWeight:600,color:"#7c3aed"}}>{formatL(r.ihssTotal)}</td></>:<><td style={{...S.tdM,color:"#0369a1"}}>{formatL(r.rap)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.isr)}</td></>}
+          {!result.isFirst?<><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssEM)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssIVM)}</td><td style={{...S.tdM,fontWeight:600,color:"#7c3aed"}}>{formatL(r.ihssTotal)}</td></>:<><td style={{...S.tdM,color:"#0369a1"}}>{formatL(r.rap)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.isr)}</td></>}
           <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.advance)}</td>
           <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.otherDed)}</td>
           <td style={{...S.tdM,fontWeight:600}}>{formatL(r.totalEarned)}</td>
@@ -906,7 +906,7 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
         <td style={{...S.tdM,fontWeight:700,color:"#059669"}}>{formatL(result.rows.reduce((s,r)=>s+r.otAmount,0))}</td>
         <td style={{...S.tdM,fontWeight:700,color:"#059669"}}>{formatL(result.rows.reduce((s,r)=>s+r.bonus,0))}</td>
         <td style={{...S.tdM,fontWeight:700,color:"#059669"}}>{formatL(result.rows.reduce((s,r)=>s+r.vacation,0))}</td>
-        {result.isFirst?<><td colSpan={2}></td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td></>:<><td style={{...S.tdM,fontWeight:700,color:"#0369a1"}}>{formatL(result.rows.reduce((s,r)=>s+r.rap,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.isr,0))}</td></>}
+        {!result.isFirst?<><td colSpan={2}></td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td></>:<><td style={{...S.tdM,fontWeight:700,color:"#0369a1"}}>{formatL(result.rows.reduce((s,r)=>s+r.rap,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.isr,0))}</td></>}
         <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.advance,0))}</td>
         <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.otherDed,0))}</td>
         <td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.totalEarned,0))}</td>
