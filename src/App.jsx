@@ -73,6 +73,24 @@ function calcIHSS_monthly(sal) { const b = Math.min(sal, IHSS.EM_TECHO); return 
 function calcIHSS_biweekly(sal) { const m = calcIHSS_monthly(sal); return { em: m.em/2, ivm: m.ivm/2, total: m.total/2 }; }
 function calcRAP_monthly(sal) { const exc = Math.max(0, sal - IHSS.IVM_TECHO); const f = exc * 0.015; return { feo3: f, fio3: f, employeeTotal: f, rl: sal*0.04, grandTotal: sal*0.04 + f*2 }; }
 
+// ISR Honduras 2026 - Impuesto Sobre la Renta
+function calcISR_monthly(salary, medicalExpenses) {
+  const annualGross = salary * 12;
+  // Deducciones anuales
+  const ihssAnnual = calcIHSS_monthly(salary).total * 12;
+  const rapAnnual = calcRAP_monthly(salary).employeeTotal * 12;
+  const medical = Math.min(medicalExpenses || 0, 40000); // Tope L40,000
+  // Base gravable
+  const taxable = annualGross - ihssAnnual - rapAnnual - medical;
+  // Tabla progresiva 2026
+  let isr = 0;
+  if (taxable <= 228324.32) { isr = 0; }
+  else if (taxable <= 348154.11) { isr = (taxable - 228324.32) * 0.15; }
+  else if (taxable <= 809660.75) { isr = 17974.47 + (taxable - 348154.11) * 0.20; }
+  else { isr = 110275.60 + (taxable - 809660.75) * 0.25; }
+  return isr / 12; // Retención mensual
+}
+
 function isLastWeekOfMonth(from, to) {
   const s = new Date(from+"T12:00:00"), e = new Date(to+"T12:00:00");
   for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)) {
@@ -732,29 +750,166 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
 function ConfidentialTab({employees,refresh}){
   const conf=employees.filter(e=>e.empType==="biweekly");
   const[modal,setModal]=useState(null);const[form,setForm]=useState({id:"",name:"",position:"",salary:""});const[saving,setSaving]=useState(false);
-  const[from,setFrom]=useState("");const[to,setTo]=useState("");const[result,setResult]=useState(null);const[adj,setAdj]=useState({});const[paySaving,setPaySaving]=useState(false);
+  const[quincena,setQuincena]=useState("1");const[month,setMonth]=useState(new Date().toISOString().slice(0,7));
+  const[result,setResult]=useState(null);const[adj,setAdj]=useState({});const[paySaving,setPaySaving]=useState(false);
+  
   const openAdd=()=>{setForm({id:"",name:"",position:"",salary:""});setModal("new")};
   const openEdit=e=>{setForm({...e,salary:String(e.salary)});setModal(e.id)};
   const doSave=async()=>{const emp={...form,salary:parseFloat(form.salary)||0,empType:"biweekly"};if(!emp.id||!emp.name)return;setSaving(true);await db.upsertEmployee(emp);await refresh();setSaving(false);setModal(null)};
   const doDelete=async id=>{if(confirm("¿Eliminar?")){await db.deleteEmployee(id);await refresh()}};
-  const generate=()=>{if(!from||!to)return;const rows=conf.map(emp=>{const bw=emp.salary/2;const ihss=calcIHSS_biweekly(emp.salary);const a=adj[emp.id]||{};const adv=+a.advance||0,other=+a.otherDed||0;const te=bw;const td=ihss.total+adv+other;return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,baseSalary:bw,ihssEM:ihss.em,ihssIVM:ihss.ivm,ihssTotal:ihss.total,advance:adv,otherDed:other,totalEarned:te,totalDeductions:td,netPay:te-td,ot:{0.25:0,0.5:0,0.75:0,1.0:0},otPay:0,daily:emp.salary/30,hourly:emp.salary/30/8,days:15,effectiveHrs:0,fuel:0,vacation:0,incapacity:0,dec4:0,dec3:0,rap:0}});setResult({period:`Q ${from} al ${to}`,rows,from,to})};
-  const doSaveP=async()=>{if(!result)return;setPaySaving(true);/* Save biweekly payroll to regular payrolls table */await db.savePayroll(result);await refresh();setPaySaving(false);alert("✅ Guardada.")};
   const updAdj=(id,f,v)=>setAdj(p=>({...p,[id]:{...(p[id]||{}),[f]:v}}));
+
+  const generate=()=>{
+    if(!month)return;
+    const isFirst=quincena==="1";
+    const periodLabel=isFirst?`Q1 ${month} (1-15)`:`Q2 ${month} (16-${new Date(+month.slice(0,4),+month.slice(5,7),0).getDate()})`;
+    const from=isFirst?`${month}-01`:`${month}-16`;
+    const lastDay=new Date(+month.slice(0,4),+month.slice(5,7),0).getDate();
+    const to=isFirst?`${month}-15`:`${month}-${lastDay}`;
+    
+    const rows=conf.map(emp=>{
+      const bw=emp.salary/2;
+      const a=adj[emp.id]||{};
+      
+      // IHSS: only first half
+      const ihss=isFirst?calcIHSS_biweekly(emp.salary):{em:0,ivm:0,total:0};
+      // RAP: only second half
+      const rap=!isFirst?calcRAP_monthly(emp.salary).employeeTotal:0;
+      const rapManual=+a.rapOverride||0;
+      const rapFinal=rapManual>0?rapManual:rap;
+      // ISR: only second half (auto-calculated, editable)
+      const medicalExp=+a.medicalExp||0;
+      const isrAuto=!isFirst?calcISR_monthly(emp.salary,medicalExp):0;
+      const isrManual=+a.isr||0;
+      const isr=!isFirst?(isrManual>0?isrManual:isrAuto):0;
+      
+      // Manual income fields
+      const otAmount=+a.otAmount||0; // Overtime amount (manual)
+      const bonus=+a.bonus||0; // Production bonus
+      const vacation=+a.vacation||0;
+      // Manual deduction fields
+      const advance=+a.advance||0;
+      const otherDed=+a.otherDed||0;
+      
+      const totalEarned=bw+otAmount+bonus+vacation;
+      const totalDeductions=ihss.total+rapFinal+isr+advance+otherDed;
+      
+      return{
+        employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,
+        baseSalary:bw,ihssEM:ihss.em,ihssIVM:ihss.ivm,ihssTotal:ihss.total,
+        rap:rapFinal,isr,otAmount,bonus,vacation,advance,otherDed,
+        totalEarned,totalDeductions,netPay:totalEarned-totalDeductions,
+        // For compatibility with print/excel
+        daily:emp.salary/30,hourly:emp.salary/30/8,days:15,effectiveHrs:0,
+        ot:{0.25:0,0.5:0,0.75:0,1.0:0},otPay:otAmount,fuel:0,incapacity:0,dec4:0,dec3:0,
+      };
+    });
+    setResult({period:periodLabel,rows,from,to,isFirst,quincena});
+  };
+
+  const doSaveP=async()=>{if(!result)return;setPaySaving(true);await db.savePayroll(result);await refresh();setPaySaving(false);alert("✅ Guardada.")};
+
+  const printConf=()=>{
+    if(!result)return;const rows=result.rows;const isFirst=result.isFirst;
+    const t={base:rows.reduce((s,r)=>s+r.baseSalary,0),ot:rows.reduce((s,r)=>s+r.otAmount,0),bonus:rows.reduce((s,r)=>s+r.bonus,0),vac:rows.reduce((s,r)=>s+r.vacation,0),ihss:rows.reduce((s,r)=>s+r.ihssTotal,0),rap:rows.reduce((s,r)=>s+r.rap,0),isr:rows.reduce((s,r)=>s+r.isr,0),adv:rows.reduce((s,r)=>s+r.advance,0),other:rows.reduce((s,r)=>s+r.otherDed,0),earned:rows.reduce((s,r)=>s+r.totalEarned,0),ded:rows.reduce((s,r)=>s+r.totalDeductions,0),net:rows.reduce((s,r)=>s+r.netPay,0)};
+    const dedCols=isFirst?`<th>IHSS EM</th><th>IHSS IVM</th><th>Tot.IHSS</th>`:`<th>RAP</th><th>ISR</th>`;
+    const dedData=(r)=>isFirst?`<td class="r">${fN(r.ihssEM)}</td><td class="r">${fN(r.ihssIVM)}</td><td class="r">${fN(r.ihssTotal)}</td>`:`<td class="r">${fN(r.rap)}</td><td class="r">${fN(r.isr)}</td>`;
+    const dedTotals=isFirst?`<td class="r">${fN(t.ihss)}</td><td></td><td></td>`:`<td class="r">${fN(t.rap)}</td><td class="r">${fN(t.isr)}</td>`;
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Confidencial ${result.period}</title><style>@page{size:landscape;margin:10mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:8pt}table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#0a2351;color:#fff;padding:4px 3px;font-size:6.5pt;text-transform:uppercase;border:1px solid #0d2d6b;text-align:center}td{padding:3px;border:1px solid #c8d6e5;font-size:7.5pt}.r{text-align:right;font-family:'Courier New',monospace}.c{text-align:center}.name{font-weight:600;white-space:nowrap}.total-row{background:#e8eef6;font-weight:700}.total-row td{border-top:2px solid #0a2351}.net{color:#0a6847;font-weight:700}.header{text-align:center;margin-bottom:8px}.header img{height:36px;margin-bottom:4px}.signatures{margin-top:30px;display:flex;justify-content:space-between}.sig-box{text-align:center;width:180px}.sig-line{border-top:1px solid #000;margin-top:40px;padding-top:3px;font-size:8pt}@media print{.no-print{display:none!important}}.no-print{position:fixed;top:10px;right:10px;z-index:999}.btn{padding:8px 20px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:6px}</style></head><body>
+<div class="no-print"><button class="btn" style="background:#0a2351;color:#fff" onclick="window.print()">🖨️ Imprimir</button><button class="btn" style="background:#64748b;color:#fff" onclick="window.close()">✕ Cerrar</button></div>
+<div class="header"><img src="${LOGO}" alt="Horeb"/><div style="font-size:10pt;color:#1a3a6b">Planilla Confidencial</div><div style="font-size:9pt;font-weight:bold;color:#0a2351;margin-top:3px">${result.period}</div></div>
+<table><thead><tr><th>Cód</th><th>Nombre</th><th>Posición</th><th>Sal.Mensual</th><th>Quincenal</th><th>H.Extras</th><th>Bono Prod.</th><th>Vacaciones</th>${dedCols}<th>Adelanto</th><th>Otras Ded.</th><th>Devengado</th><th>Tot.Ded.</th><th>Neto</th></tr></thead><tbody>
+${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}</td><td>${r.position}</td><td class="r">${fN(r.salary)}</td><td class="r">${fN(r.baseSalary)}</td><td class="r">${fN(r.otAmount)}</td><td class="r">${fN(r.bonus)}</td><td class="r">${fN(r.vacation)}</td>${dedData(r)}<td class="r">${fN(r.advance)}</td><td class="r">${fN(r.otherDed)}</td><td class="r" style="font-weight:600">${fN(r.totalEarned)}</td><td class="r">${fN(r.totalDeductions)}</td><td class="r net">${fN(r.netPay)}</td></tr>`).join("")}
+<tr class="total-row"><td colspan="4" style="text-align:right">TOTALES</td><td class="r">${fN(t.base)}</td><td class="r">${fN(t.ot)}</td><td class="r">${fN(t.bonus)}</td><td class="r">${fN(t.vac)}</td>${dedTotals}<td class="r">${fN(t.adv)}</td><td class="r">${fN(t.other)}</td><td class="r" style="font-weight:700">${fN(t.earned)}</td><td class="r">${fN(t.ded)}</td><td class="r net" style="font-size:9pt">${fN(t.net)}</td></tr></tbody></table>
+<div class="signatures"><div class="sig-box"><div class="sig-line">Elaborado por</div></div><div class="sig-box"><div class="sig-line">Revisado por</div></div><div class="sig-box"><div class="sig-line">Autorizado por</div></div></div></body></html>`;
+    const w=window.open("","_blank");if(w){w.document.write(html);w.document.close()}
+  };
+
   return(<div>
     <h2 style={S.title}>Planilla Confidencial (Quincenal)</h2>
+    {/* Employee CRUD */}
     <div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>🔒 Empleados Confidenciales</h3><button style={S.btnPrimary} onClick={openAdd}>+ Agregar</button></div>
       {modal&&<div style={S.overlay}><div style={S.modal}><h3 style={{fontSize:18,fontWeight:700,marginBottom:16}}>{modal==="new"?"Nuevo":"Editar"}</h3>
         <div style={S.formGrid}><Field l="Código" v={form.id} o={v=>setForm({...form,id:v})} dis={modal!=="new"}/><Field l="Nombre" v={form.name} o={v=>setForm({...form,name:v})}/><Field l="Posición" v={form.position} o={v=>setForm({...form,position:v})}/><Field l="Salario Mensual" v={form.salary} o={v=>setForm({...form,salary:v})} t="number"/></div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:20}}><button style={S.btnSec} onClick={()=>setModal(null)}>Cancelar</button><button style={S.btnPrimary} onClick={doSave} disabled={saving}>{saving?"...":"Guardar"}</button></div></div></div>}
-      {conf.length===0?<p style={{color:"#94a3b8"}}>No hay empleados confidenciales.</p>:<div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Posición","Sal.Mensual","Quincenal","IHSS/Q",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
-        {conf.map(e=>{const ihss=calcIHSS_biweekly(e.salary);return<tr key={e.id}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600}}>{e.name}</td><td style={S.td}>{e.position}</td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/2)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(ihss.total)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>})}
+      {conf.length===0?<p style={{color:"#94a3b8"}}>No hay empleados confidenciales.</p>:<div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Posición","Sal.Mensual","Quincenal",""].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=3?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
+        {conf.map(e=><tr key={e.id}><td style={S.td}><span style={S.badge}>{e.id}</span></td><td style={{...S.td,fontWeight:600}}>{e.name}</td><td style={S.td}>{e.position}</td><td style={S.tdM}>{formatL(e.salary)}</td><td style={S.tdM}>{formatL(e.salary/2)}</td><td style={{...S.td,textAlign:"center"}}><button style={S.tblBtn} onClick={()=>openEdit(e)}>Editar</button><button style={{...S.tblBtn,color:"#dc2626"}} onClick={()=>doDelete(e.id)}>Eliminar</button></td></tr>)}
       </tbody></table></div>}</div>
-    <div style={S.card}><h3 style={S.cardTitle}>📋 Generar Quincenal</h3><div style={S.formGrid}><Field l="Desde" v={from} o={setFrom} t="date"/><Field l="Hasta" v={to} o={setTo} t="date"/><div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div></div></div>
-    {result&&<div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>{result.period}</h3><div style={{display:"flex",gap:8}}><button style={S.btnGold} onClick={()=>printPayroll(result)}>🖨️</button><button style={{...S.btnGold,background:"linear-gradient(135deg,#059669,#10b981)"}} onClick={()=>exportPayrollExcel(result)}>📊 Excel</button><button style={S.btnPrimary} onClick={doSaveP} disabled={paySaving}>{paySaving?"...":"💾 Guardar"}</button></div></div>
-      <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Cód","Nombre","Sal.M.","Quincenal","IHSS EM","IHSS IVM","Tot.IHSS","Adel.","Otras","Tot.Ded.","Neto"].map((h,i)=><th key={i} style={{...S.th,textAlign:i>=2?"right":"left"}}>{h}</th>)}</tr></thead><tbody>
-        {result.rows.map(r=><tr key={r.employeeId}><td style={S.td}><span style={S.badge}>{r.employeeId}</span></td><td style={{...S.td,fontWeight:600}}>{r.name}</td><td style={S.tdM}>{formatL(r.salary)}</td><td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssEM)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssIVM)}</td><td style={{...S.tdM,fontWeight:600,color:"#7c3aed"}}>{formatL(r.ihssTotal)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.advance)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.otherDed)}</td><td style={{...S.tdM,fontWeight:600,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:13}}>{formatL(r.netPay)}</td></tr>)}
-      </tbody><tfoot><tr style={{background:"#e8eef6"}}><td colSpan={3} style={{...S.td,fontWeight:700}}>TOTALES</td><td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td><td colSpan={2}></td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td><td colSpan={2}></td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:14}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td></tr></tfoot></table></div>
-      <div style={{marginTop:12}}><h4 style={{fontSize:13,fontWeight:700,color:"#475569",marginBottom:6}}>Ajustes</h4><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Empleado","Adelanto","Otras Ded."].map((h,i)=><th key={i} style={S.th}>{h}</th>)}</tr></thead><tbody>{conf.map(emp=>{const a=adj[emp.id]||{};return<tr key={emp.id}><td style={{...S.td,fontWeight:600,fontSize:12}}>{emp.name}</td>{["advance","otherDed"].map(f=><td key={f} style={S.td}><input style={{...S.input,width:90,padding:"4px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0"/></td>)}</tr>})}</tbody></table></div></div>
+    
+    {/* Generate */}
+    <div style={S.card}><h3 style={S.cardTitle}>📋 Generar Quincenal</h3>
+      <div style={S.formGrid}>
+        <Field l="Mes" v={month} o={setMonth} t="month"/>
+        <div><label style={S.label}>Quincena</label><select style={S.input} value={quincena} onChange={e=>setQuincena(e.target.value)}><option value="1">1ra Quincena (1-15) — IHSS</option><option value="2">2da Quincena (16-30) — RAP + ISR</option></select></div>
+        <div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div>
+      </div>
+      <div style={{marginTop:10,padding:"8px 12px",background:quincena==="1"?"#eff6ff":"#fef3c7",borderRadius:8,fontSize:12}}>
+        {quincena==="1"?<span style={{color:"#1d4ed8"}}>📌 1ra quincena: se deduce <strong>IHSS</strong></span>:<span style={{color:"#92400e"}}>📌 2da quincena: se deduce <strong>RAP</strong> e <strong>ISR</strong></span>}
+      </div>
+    </div>
+
+    {/* Adjustments */}
+    {conf.length>0&&<div style={S.card}><h3 style={S.cardTitle}>⚙️ Ajustes por Empleado</h3>
+      <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
+        <th style={S.th}>Empleado</th>
+        <th style={{...S.th,background:"#065f46"}}>H.Extras L.</th>
+        <th style={{...S.th,background:"#065f46"}}>Bono Prod.</th>
+        <th style={{...S.th,background:"#065f46"}}>Vacaciones</th>
+        {quincena==="2"&&<><th style={{...S.th,background:"#991b1b"}}>RAP</th><th style={{...S.th,background:"#991b1b"}}>ISR</th><th style={{...S.th,background:"#064e3b"}}>Gastos Méd.</th></>}
+        <th style={{...S.th,background:"#991b1b"}}>Adelanto</th>
+        <th style={{...S.th,background:"#991b1b"}}>Otras Ded.</th>
+      </tr></thead><tbody>
+        {conf.map(emp=>{const a=adj[emp.id]||{};const rapAuto=calcRAP_monthly(emp.salary).employeeTotal;return<tr key={emp.id}>
+          <td style={{...S.td,fontWeight:600,fontSize:12,color:"#0a2351",whiteSpace:"nowrap"}}>{emp.name}</td>
+          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.otAmount||""} onChange={e=>updAdj(emp.id,"otAmount",e.target.value)} placeholder="0.00"/></td>
+          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.bonus||""} onChange={e=>updAdj(emp.id,"bonus",e.target.value)} placeholder="0.00"/></td>
+          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.vacation||""} onChange={e=>updAdj(emp.id,"vacation",e.target.value)} placeholder="0.00"/></td>
+          {quincena==="2"&&<><td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.rapOverride||""} onChange={e=>updAdj(emp.id,"rapOverride",e.target.value)} placeholder={rapAuto.toFixed(2)}/></td>
+          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.isr||""} onChange={e=>updAdj(emp.id,"isr",e.target.value)} placeholder={calcISR_monthly(emp.salary,+a.medicalExp||0).toFixed(2)}/></td>
+          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.medicalExp||""} onChange={e=>updAdj(emp.id,"medicalExp",e.target.value)} placeholder="0.00"/></td></>}
+          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.advance||""} onChange={e=>updAdj(emp.id,"advance",e.target.value)} placeholder="0.00"/></td>
+          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.otherDed||""} onChange={e=>updAdj(emp.id,"otherDed",e.target.value)} placeholder="0.00"/></td>
+        </tr>})}
+      </tbody></table></div>
+      <p style={{fontSize:11,color:"#64748b",marginTop:6}}>Ingresa ajustes y dale <strong>Generar</strong> para recalcular. {quincena==="2"?"RAP muestra el valor auto-calculado como referencia.":""}</p>
+    </div>}
+
+    {/* Result */}
+    {result&&<div style={S.card}><div style={S.titleRow}><h3 style={S.cardTitle}>{result.period}</h3><div style={{display:"flex",gap:8}}><button style={S.btnGold} onClick={printConf}>🖨️</button><button style={{...S.btnGold,background:"linear-gradient(135deg,#059669,#10b981)"}} onClick={()=>exportPayrollExcel(result)}>📊 Excel</button><button style={S.btnPrimary} onClick={doSaveP} disabled={paySaving}>{paySaving?"...":"💾 Guardar"}</button></div></div>
+      <div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>
+        <th style={S.th}>Cód</th><th style={S.th}>Nombre</th><th style={S.th}>Sal.M.</th><th style={S.th}>Quincenal</th>
+        <th style={{...S.th,background:"#065f46"}}>H.Extras</th><th style={{...S.th,background:"#065f46"}}>Bono</th><th style={{...S.th,background:"#065f46"}}>Vac.</th>
+        {result.isFirst?<><th style={{...S.th,background:"#991b1b"}}>IHSS EM</th><th style={{...S.th,background:"#991b1b"}}>IHSS IVM</th><th style={{...S.th,background:"#991b1b"}}>Tot.IHSS</th></>:<><th style={{...S.th,background:"#991b1b"}}>RAP</th><th style={{...S.th,background:"#991b1b"}}>ISR</th></>}
+        <th style={{...S.th,background:"#991b1b"}}>Adel.</th><th style={{...S.th,background:"#991b1b"}}>Otras</th>
+        <th style={S.th}>Deveng.</th><th style={S.th}>Tot.Ded.</th><th style={S.th}>Neto</th>
+      </tr></thead><tbody>
+        {result.rows.map(r=><tr key={r.employeeId}>
+          <td style={S.td}><span style={S.badge}>{r.employeeId}</span></td>
+          <td style={{...S.td,fontWeight:600}}>{r.name}</td>
+          <td style={S.tdM}>{formatL(r.salary)}</td>
+          <td style={{...S.tdM,fontWeight:600}}>{formatL(r.baseSalary)}</td>
+          <td style={{...S.tdM,color:"#059669"}}>{formatL(r.otAmount)}</td>
+          <td style={{...S.tdM,color:"#059669"}}>{formatL(r.bonus)}</td>
+          <td style={{...S.tdM,color:"#059669"}}>{formatL(r.vacation)}</td>
+          {result.isFirst?<><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssEM)}</td><td style={{...S.tdM,color:"#7c3aed"}}>{formatL(r.ihssIVM)}</td><td style={{...S.tdM,fontWeight:600,color:"#7c3aed"}}>{formatL(r.ihssTotal)}</td></>:<><td style={{...S.tdM,color:"#0369a1"}}>{formatL(r.rap)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.isr)}</td></>}
+          <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.advance)}</td>
+          <td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.otherDed)}</td>
+          <td style={{...S.tdM,fontWeight:600}}>{formatL(r.totalEarned)}</td>
+          <td style={{...S.tdM,fontWeight:600,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td>
+          <td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:13}}>{formatL(r.netPay)}</td>
+        </tr>)}
+      </tbody><tfoot><tr style={{background:"#e8eef6"}}>
+        <td colSpan={4} style={{...S.td,fontWeight:700}}>TOTALES</td>
+        <td style={{...S.tdM,fontWeight:700,color:"#059669"}}>{formatL(result.rows.reduce((s,r)=>s+r.otAmount,0))}</td>
+        <td style={{...S.tdM,fontWeight:700,color:"#059669"}}>{formatL(result.rows.reduce((s,r)=>s+r.bonus,0))}</td>
+        <td style={{...S.tdM,fontWeight:700,color:"#059669"}}>{formatL(result.rows.reduce((s,r)=>s+r.vacation,0))}</td>
+        {result.isFirst?<><td colSpan={2}></td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td></>:<><td style={{...S.tdM,fontWeight:700,color:"#0369a1"}}>{formatL(result.rows.reduce((s,r)=>s+r.rap,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.isr,0))}</td></>}
+        <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.advance,0))}</td>
+        <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.otherDed,0))}</td>
+        <td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.totalEarned,0))}</td>
+        <td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td>
+        <td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:14}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td>
+      </tr></tfoot></table></div>
     </div>}
   </div>);
 }
