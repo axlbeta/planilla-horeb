@@ -74,21 +74,22 @@ function calcIHSS_biweekly(sal) { const m = calcIHSS_monthly(sal); return { em: 
 function calcRAP_monthly(sal) { const exc = Math.max(0, sal - IHSS.IVM_TECHO); const f = exc * 0.015; return { feo3: f, fio3: f, employeeTotal: f, rl: sal*0.04, grandTotal: sal*0.04 + f*2 }; }
 
 // ISR Honduras 2026 - Impuesto Sobre la Renta
-function calcISR_monthly(salary, medicalExpenses) {
+function calcISR_monthly(salary, medicalExpenses, afpAnnual) {
   const annualGross = salary * 12;
   // Deducciones anuales
-  const ihssAnnual = calcIHSS_monthly(salary).total * 12;
+  const ihssAnnual = Math.min(salary, IHSS.EM_TECHO) * IHSS.EM_TASA * 12; // Solo EM
   const rapAnnual = calcRAP_monthly(salary).employeeTotal * 12;
-  const medical = Math.min(medicalExpenses || 0, 40000); // Tope L40,000
+  const medical = Math.min(medicalExpenses || 0, 40000);
+  const afp = afpAnnual || 0;
   // Base gravable
-  const taxable = annualGross - ihssAnnual - rapAnnual - medical;
+  const taxable = annualGross - ihssAnnual - rapAnnual - medical - afp;
   // Tabla progresiva 2026
   let isr = 0;
   if (taxable <= 228324.32) { isr = 0; }
   else if (taxable <= 348154.11) { isr = (taxable - 228324.32) * 0.15; }
   else if (taxable <= 809660.75) { isr = 17974.47 + (taxable - 348154.11) * 0.20; }
   else { isr = 110275.60 + (taxable - 809660.75) * 0.25; }
-  return isr / 12; // Retención mensual
+  return isr / 12;
 }
 
 function isLastWeekOfMonth(from, to) {
@@ -779,7 +780,8 @@ function ConfidentialTab({employees,refresh}){
       const rapFinal=rapManual>0?rapManual:rap;
       // ISR: only second half (auto-calculated, editable)
       const medicalExp=+a.medicalExp||0;
-      const isrAuto=!isFirst?calcISR_monthly(emp.salary,medicalExp):0;
+      const afpAnnual=+a.afpAnnual||0;
+      const isrAuto=!isFirst?calcISR_monthly(emp.salary,medicalExp,afpAnnual):0;
       const isrManual=+a.isr||0;
       const isr=!isFirst?(isrManual>0?isrManual:isrAuto):0;
       
@@ -855,7 +857,7 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
         <th style={{...S.th,background:"#065f46"}}>H.Extras L.</th>
         <th style={{...S.th,background:"#065f46"}}>Bono Prod.</th>
         <th style={{...S.th,background:"#065f46"}}>Vacaciones</th>
-        {quincena==="2"&&<><th style={{...S.th,background:"#991b1b"}}>RAP</th><th style={{...S.th,background:"#991b1b"}}>ISR</th><th style={{...S.th,background:"#064e3b"}}>Gastos Méd.</th></>}
+          {quincena==="2"&&<><th style={{...S.th,background:"#991b1b"}}>RAP</th><th style={{...S.th,background:"#991b1b"}}>ISR</th><th style={{...S.th,background:"#064e3b"}}>AFP Anual</th><th style={{...S.th,background:"#064e3b"}}>Gastos Méd.</th></>}
         <th style={{...S.th,background:"#991b1b"}}>Adelanto</th>
         <th style={{...S.th,background:"#991b1b"}}>Otras Ded.</th>
       </tr></thead><tbody>
@@ -865,7 +867,8 @@ ${rows.map(r=>`<tr><td class="c">${r.employeeId}</td><td class="name">${r.name}<
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.bonus||""} onChange={e=>updAdj(emp.id,"bonus",e.target.value)} placeholder="0.00"/></td>
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.vacation||""} onChange={e=>updAdj(emp.id,"vacation",e.target.value)} placeholder="0.00"/></td>
           {quincena==="2"&&<><td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.rapOverride||""} onChange={e=>updAdj(emp.id,"rapOverride",e.target.value)} placeholder={rapAuto.toFixed(2)}/></td>
-          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.isr||""} onChange={e=>updAdj(emp.id,"isr",e.target.value)} placeholder={calcISR_monthly(emp.salary,+a.medicalExp||0).toFixed(2)}/></td>
+          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.isr||""} onChange={e=>updAdj(emp.id,"isr",e.target.value)} placeholder={calcISR_monthly(emp.salary,+(a.medicalExp||0),+(a.afpAnnual||0)).toFixed(2)}/></td>
+          <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.afpAnnual||""} onChange={e=>updAdj(emp.id,"afpAnnual",e.target.value)} placeholder="0.00"/></td>
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.medicalExp||""} onChange={e=>updAdj(emp.id,"medicalExp",e.target.value)} placeholder="0.00"/></td></>}
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.advance||""} onChange={e=>updAdj(emp.id,"advance",e.target.value)} placeholder="0.00"/></td>
           <td style={S.td}><input style={{...S.input,width:90,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.otherDed||""} onChange={e=>updAdj(emp.id,"otherDed",e.target.value)} placeholder="0.00"/></td>
