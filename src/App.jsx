@@ -583,14 +583,15 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
         const rapManual=+a.rapOverride||0;
         const rapFinal=rapManual>0?rapManual:(applyRAP?rapD.employeeTotal:0);
         const advance=+a.advance||0,otherDed=+a.otherDed||0;
+        const totalEarned=manualPay;
         const totalDeductions=ihss.total+rapFinal+advance+otherDed;
         return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,
           daily:emp.salary/30,hourly:emp.salary/30/8,isManual:true,
           daysWorked:0,absences:0,daysPaid:0,days:0,effectiveHrs:0,
-          baseSalary:manualPay,ot:{0.25:0,0.5:0,0.75:0,1.0:0},otPay:0,
+          baseSalary:0,ot:{0.25:0,0.5:0,0.75:0,1.0:0},otPay:0,
           ihssTotal:ihss.total,rap:rapFinal,
-          fuel:0,vacation:0,incapacity:0,advance,dec4:0,dec3:0,otherDed,
-          totalEarned:manualPay,totalDeductions,netPay:manualPay-totalDeductions};
+          fuel:0,vacation:0,incapacity:manualPay,advance,dec4:0,dec3:0,otherDed,
+          totalEarned,totalDeductions,netPay:totalEarned-totalDeductions};
       }
 
       const isNC=emp.empType==="weekly_nonclock";
@@ -804,7 +805,7 @@ function ConfidentialTab({employees,refresh}){
       const a=adj[emp.id]||{};
       
       // IHSS: only second half
-      const ihss=!isFirst?calcIHSS_biweekly(emp.salary):{em:0,ivm:0,total:0};
+      const ihss=!isFirst?calcIHSS_monthly(emp.salary):{em:0,ivm:0,total:0};
       // RAP: only first half
       const rap=isFirst?calcRAP_monthly(emp.salary).employeeTotal:0;
       const rapManual=+a.rapOverride||0;
