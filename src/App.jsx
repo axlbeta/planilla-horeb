@@ -548,6 +548,7 @@ function ClockTab({employees,clockEntries,refresh}){
 // ═══ PAYROLL ═══
 function PayrollTab({employees,clockEntries,refresh,holidays}){
   const[weekNum,setWeekNum]=useState("");const[from,setFrom]=useState("");const[to,setTo]=useState("");const[result,setResult]=useState(null);const[adj,setAdj]=useState({});const[saving,setSaving]=useState(false);
+  const[chkIHSS,setChkIHSS]=useState(false);const[chkRAP,setChkRAP]=useState(false);
   const weeklyEmps=employees.filter(e=>{const t=e.empType||"weekly";return t==="weekly"||t==="weekly_nonclock"});
 
   const generate=()=>{
@@ -567,13 +568,34 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
     let holOnWD=0;
     for(let d=new Date(s0);d<=e0;d.setDate(d.getDate()+1)){const dow=d.getDay();const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;if(dow>=1&&dow<=5&&!(ds===fs&&dow===5)&&holidayDates.has(ds))holOnWD++}
 
-    const applyIHSS=isLastWeekOfMonth(fs,ts);const applyRAP=isSecondWeekOfMonth(fs,ts);
+    const applyIHSS=chkIHSS;const applyRAP=chkRAP;
     const autoFills=[];
 
     const rows=weeklyEmps.map(emp=>{
+      const a=adj[emp.id]||{};
+      const isManual=a.manualMode==="1"; // Incapacidad larga / Maternidad
+      
+      // MANUAL MODE: pago fijo, sin OT, sin faltas
+      if(isManual){
+        const manualPay=+a.manualPay||0;
+        const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{total:0};
+        const rapD=applyRAP?calcRAP_monthly(emp.salary):{employeeTotal:0};
+        const rapManual=+a.rapOverride||0;
+        const rapFinal=rapManual>0?rapManual:(applyRAP?rapD.employeeTotal:0);
+        const advance=+a.advance||0,otherDed=+a.otherDed||0;
+        const totalDeductions=ihss.total+rapFinal+advance+otherDed;
+        return{employeeId:emp.id,name:emp.name,position:emp.position,salary:emp.salary,
+          daily:emp.salary/30,hourly:emp.salary/30/8,isManual:true,
+          daysWorked:0,absences:0,daysPaid:0,days:0,effectiveHrs:0,
+          baseSalary:manualPay,ot:{0.25:0,0.5:0,0.75:0,1.0:0},otPay:0,
+          ihssTotal:ihss.total,rap:rapFinal,
+          fuel:0,vacation:0,incapacity:0,advance,dec4:0,dec3:0,otherDed,
+          totalEarned:manualPay,totalDeductions,netPay:manualPay-totalDeductions};
+      }
+
       const isNC=emp.empType==="weekly_nonclock";
       if(isNC){
-        const daily=emp.salary/30,hourly=daily/8;const a=adj[emp.id]||{};const faltas=+a.faltas||0;
+        const daily=emp.salary/30,hourly=daily/8;const faltas=+a.faltas||0;
         const hasVacNC=(+a.vacation||0)>0||(+a.incapacity||0)>0;
         const daysPaid=hasVacNC?Math.max(0,7-faltas):Math.max(0,7-(faltas*2)),baseSalary=daily*daysPaid;
         const ihss=applyIHSS?calcIHSS_monthly(emp.salary):{em:0,ivm:0,total:0};
@@ -595,7 +617,6 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
       const clockedDays=empEntries.filter(e=>{if(!e.checkIn||!e.checkOut)return false;const dow=new Date(e.date+"T12:00:00").getDay();return dow>=1&&dow<=5&&!holidayDates.has(e.date)&&!(e.date===fs&&dow===5)}).length;
       const daysWorked=clockedDays+holOnWD;
       const absences=Math.max(0,workDays-daysWorked);
-      const a=adj[emp.id]||{};
       const hasVacation=(+a.vacation||0)>0||(+a.incapacity||0)>0;
       const daysPaid=hasVacation?Math.max(0,7-absences):Math.max(0,7-(absences*2));
       const daily=emp.salary/30,hourly=daily/8,baseSalary=daily*daysPaid;
@@ -716,7 +737,12 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
   return(<div>
     <h2 style={S.title}>Generar Planilla</h2>
     <div style={S.card}><h3 style={S.cardTitle}>📅 Período</h3><p style={{fontSize:12,color:"#64748b",marginBottom:10}}>Viernes 5pm → Viernes siguiente 5pm</p>
-      <div style={S.formGrid}><Field l="Semana #" v={weekNum} o={setWeekNum} ph="3"/><Field l="Desde" v={from} o={setFrom} t="date"/><Field l="Hasta" v={to} o={setTo} t="date"/><div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div></div></div>
+      <div style={S.formGrid}><Field l="Semana #" v={weekNum} o={setWeekNum} ph="3"/><Field l="Desde" v={from} o={setFrom} t="date"/><Field l="Hasta" v={to} o={setTo} t="date"/><div style={{display:"flex",alignItems:"flex-end"}}><button style={S.btnPrimary} onClick={generate}>Generar</button></div></div>
+      <div style={{display:"flex",gap:20,marginTop:12,flexWrap:"wrap"}}>
+        <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13,fontWeight:600,color:chkIHSS?"#7c3aed":"#94a3b8"}}><input type="checkbox" checked={chkIHSS} onChange={e=>setChkIHSS(e.target.checked)}/> Aplicar IHSS esta semana</label>
+        <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13,fontWeight:600,color:chkRAP?"#0369a1":"#94a3b8"}}><input type="checkbox" checked={chkRAP} onChange={e=>setChkRAP(e.target.checked)}/> Aplicar RAP esta semana</label>
+      </div>
+    </div>
     {result&&<>
       <div style={{...S.card,background:"#f0f3f8",border:"1px solid #d0daea"}}><div style={{display:"flex",gap:20,flexWrap:"wrap",fontSize:13}}>
         <div>Lab: <strong>{result.workDays}</strong></div>{result.holOnWD>0&&<div>Feriados: <strong style={{color:"#c9a227"}}>{result.holOnWD}</strong></div>}<div>Regla: <strong style={{color:"#059669"}}>{result.workDays}d=7d</strong></div>
@@ -738,10 +764,15 @@ function PayrollTab({employees,clockEntries,refresh,holidays}){
             <td style={{...S.tdM,fontWeight:600}}>{formatL(r.totalEarned)}</td><td style={{...S.tdM,color:"#b91c1c"}}>{formatL(r.totalDeductions)}</td>
             <td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:13}}>{formatL(r.netPay)}</td></tr>)}
         </tbody><tfoot><tr style={{background:"#e8eef6"}}><td colSpan={7} style={{...S.td,fontWeight:700}}>TOTALES</td><td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.baseSalary,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.otPay,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#7c3aed"}}>{formatL(result.rows.reduce((s,r)=>s+r.ihssTotal,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#0369a1"}}>{formatL(result.rows.reduce((s,r)=>s+r.rap,0))}</td><td style={{...S.tdM,fontWeight:700}}>{formatL(result.rows.reduce((s,r)=>s+r.totalEarned,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#b91c1c"}}>{formatL(result.rows.reduce((s,r)=>s+r.totalDeductions,0))}</td><td style={{...S.tdM,fontWeight:700,color:"#059669",fontSize:14}}>{formatL(result.rows.reduce((s,r)=>s+r.netPay,0))}</td></tr></tfoot></table></div></div>
-      <div style={S.card}><h3 style={S.cardTitle}>⚙️ Ajustes</h3><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Empleado","Tipo","Faltas","RAP","Comb.","Vac.","Incap.","Adel.","Dec4","Dec3","Otras"].map((h,i)=><th key={i} style={S.th}>{h}</th>)}</tr></thead><tbody>
-        {weeklyEmps.map(emp=>{const a=adj[emp.id]||{};const isNC=emp.empType==="weekly_nonclock";const rapAuto=calcRAP_monthly(emp.salary).employeeTotal;return<tr key={emp.id} style={isNC?{background:"#f0f3f8"}:{}}><td style={{...S.td,fontWeight:600,fontSize:12,color:"#0a2351",whiteSpace:"nowrap"}}>{emp.name}</td><td style={{...S.td,fontSize:11}}>{isNC?<span style={{color:"#1d4ed8",fontSize:10}}>SR</span>:"Reloj"}</td><td style={S.td}>{isNC?<input style={{...S.input,width:50,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.faltas||""} onChange={e=>updAdj(emp.id,"faltas",e.target.value)} placeholder="0"/>:<span style={{color:"#94a3b8",fontSize:11}}>auto</span>}</td>
-        <td style={S.td}><input style={{...S.input,width:80,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.rapOverride||""} onChange={e=>updAdj(emp.id,"rapOverride",e.target.value)} placeholder={rapAuto.toFixed(2)}/></td>
-        {["fuel","vacation","incapacity","advance","dec4","dec3","otherDed"].map(f=><td key={f} style={S.td}><input style={{...S.input,width:70,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0"/></td>)}</tr>})}
+      <div style={S.card}><h3 style={S.cardTitle}>⚙️ Ajustes</h3><div style={{overflowX:"auto"}}><table style={S.table}><thead><tr>{["Empleado","Tipo","Modo","Pago Manual","Faltas","RAP","Comb.","Vac.","Incap.","Adel.","Dec4","Dec3","Otras"].map((h,i)=><th key={i} style={S.th}>{h}</th>)}</tr></thead><tbody>
+        {weeklyEmps.map(emp=>{const a=adj[emp.id]||{};const isNC=emp.empType==="weekly_nonclock";const isManual=a.manualMode==="1";const rapAuto=calcRAP_monthly(emp.salary).employeeTotal;return<tr key={emp.id} style={isManual?{background:"#fef3c7"}:isNC?{background:"#f0f3f8"}:{}}>
+          <td style={{...S.td,fontWeight:600,fontSize:12,color:"#0a2351",whiteSpace:"nowrap"}}>{emp.name}</td>
+          <td style={{...S.td,fontSize:11}}>{isNC?<span style={{color:"#1d4ed8",fontSize:10}}>SR</span>:"Reloj"}</td>
+          <td style={S.td}><select style={{...S.input,width:85,padding:"3px",fontSize:11}} value={a.manualMode||"0"} onChange={e=>updAdj(emp.id,"manualMode",e.target.value)}><option value="0">Normal</option><option value="1">Incap/Mat</option></select></td>
+          <td style={S.td}>{isManual?<input style={{...S.input,width:80,padding:"3px",fontSize:12,textAlign:"right",background:"#fffbeb"}} type="number" value={a.manualPay||""} onChange={e=>updAdj(emp.id,"manualPay",e.target.value)} placeholder="0.00"/>:<span style={{color:"#d4d4d8",fontSize:11}}>—</span>}</td>
+          <td style={S.td}>{isManual?<span style={{color:"#d4d4d8",fontSize:11}}>N/A</span>:isNC?<input style={{...S.input,width:50,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.faltas||""} onChange={e=>updAdj(emp.id,"faltas",e.target.value)} placeholder="0"/>:<span style={{color:"#94a3b8",fontSize:11}}>auto</span>}</td>
+          <td style={S.td}><input style={{...S.input,width:80,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a.rapOverride||""} onChange={e=>updAdj(emp.id,"rapOverride",e.target.value)} placeholder={rapAuto.toFixed(2)}/></td>
+          {["fuel","vacation","incapacity","advance","dec4","dec3","otherDed"].map(f=><td key={f} style={S.td}>{isManual&&f!=="advance"&&f!=="otherDed"?<span style={{color:"#d4d4d8",fontSize:11}}>—</span>:<input style={{...S.input,width:70,padding:"3px",fontSize:12,textAlign:"right"}} type="number" value={a[f]||""} onChange={e=>updAdj(emp.id,f,e.target.value)} placeholder="0"/>}</td>)}</tr>})}
       </tbody></table></div></div>
     </>}
   </div>);
